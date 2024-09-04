@@ -1,0 +1,116 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.finetune.train_idql_diffusion_agent.TrainIDQLDiffusionAgent
+
+name: ${env_name}_idql_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: ${oc.env:DPPO_LOG_DIR}/robomimic-pretrain/square/square_pre_diffusion_mlp_ta4_td20/2024-07-10_01-46-16/checkpoint/state_8000.pt
+robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
+
+seed: 42
+device: cuda:0
+env_name: square
+obs_dim: 23
+action_dim: 7
+transition_dim: ${action_dim}
+denoising_steps: 20
+cond_steps: 1
+horizon_steps: 4
+act_steps: 4
+
+env:
+  n_envs: 50
+  name: ${env_name}
+  best_reward_threshold_for_success: 1
+  max_episode_steps: 400
+  save_video: False
+  wrappers:
+    robomimic_lowdim:
+      normalization_path: ${normalization_path}
+      low_dim_keys: ['robot0_eef_pos',
+                    'robot0_eef_quat',
+                    'robot0_gripper_qpos',
+                    'object'] # same order of preprocessed observations
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: robomimic-${env_name}-finetune
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_train_itr: 300
+  n_critic_warmup_itr: 5
+  n_steps: 400
+  gamma: 0.999
+  actor_lr: 1e-5
+  actor_weight_decay: 0
+  actor_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-5
+  critic_lr: 1e-3
+  critic_weight_decay: 0
+  critic_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-3
+  save_model_freq: 100
+  val_freq: 10
+  render:
+    freq: 1
+    num: 0
+  # IDQL specific
+  scale_reward_factor: 1
+  eval_deterministic: True
+  eval_sample_num: 10 # how many samples to score during eval
+  critic_tau: 0.001  # rate of target q network update
+  use_expectile_exploration: True
+  buffer_size: 3000
+  batch_size: 512
+  replay_ratio: 16
+
+model:
+  _target_: model.diffusion.diffusion_idql.IDQLDiffusion
+  # Sampling HPs
+  min_sampling_denoising_std: 0.1
+  randn_clip_value: 3
+  #
+  network_path: ${base_policy_path}
+  actor:
+    _target_: model.diffusion.mlp_diffusion.DiffusionMLP
+    time_dim: 32
+    mlp_dims: [1024, 1024, 1024]
+    cond_mlp_dims: [512, 64]
+    residual_style: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    transition_dim: ${transition_dim}
+  critic_q:
+    _target_: model.common.critic.CriticObsAct
+    action_dim: ${action_dim}
+    action_steps: ${act_steps}
+    obs_dim: ${obs_dim}
+    mlp_dims: [256, 256, 256]
+    activation_type: Mish
+    residual_style: True
+  critic_v:
+    _target_: model.common.critic.CriticObs
+    obs_dim: ${obs_dim}
+    mlp_dims: [256, 256, 256]
+    activation_type: Mish
+    residual_style: True
+  horizon_steps: ${horizon_steps}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  transition_dim: ${transition_dim}
+  denoising_steps: ${denoising_steps}
+  device: ${device}

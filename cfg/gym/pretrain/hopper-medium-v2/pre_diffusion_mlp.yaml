@@ -1,0 +1,71 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.pretrain.train_diffusion_agent.TrainDiffusionAgent
+
+name: ${env}_pre_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+train_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env}/train.pkl
+
+seed: 42
+device: cuda:0
+env: hopper-medium-v2
+obs_dim: 11
+action_dim: 3
+transition_dim: ${action_dim}
+denoising_steps: 20
+horizon_steps: 4
+cond_steps: 1
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: gym-${env}-pretrain
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_epochs: 3000
+  batch_size: 128
+  learning_rate: 1e-3
+  weight_decay: 1e-6
+  lr_scheduler:
+    first_cycle_steps: 3000
+    warmup_steps: 1
+    min_lr: 1e-4
+  epoch_start_ema: 10
+  update_ema_freq: 5
+  save_model_freq: 100
+
+model:
+  _target_: model.diffusion.diffusion.DiffusionModel
+  predict_epsilon: True
+  denoised_clip_value: 1.0
+  network:
+    _target_: model.diffusion.mlp_diffusion.DiffusionMLP
+    horizon_steps: ${horizon_steps}
+    transition_dim: ${transition_dim}
+    cond_dim: ${obs_dim}
+    time_dim: 16
+    mlp_dims: [512, 512, 512]
+    activation_type: ReLU
+    out_activation_type: Identity
+    use_layernorm: False
+    residual_style: True
+  horizon_steps: ${horizon_steps}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  transition_dim: ${transition_dim}
+  denoising_steps: ${denoising_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}
+
+ema:
+  decay: 0.995
+
+train_dataset:
+  _target_: agent.dataset.sequence.StitchedActionSequenceDataset
+  dataset_path: ${train_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}

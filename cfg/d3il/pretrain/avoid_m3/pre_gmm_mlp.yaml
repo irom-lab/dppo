@@ -1,0 +1,64 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.pretrain.train_gaussian_agent.TrainGaussianAgent
+
+name: avoid_m3_pre_gmm_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/d3il-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+train_dataset_path: ${oc.env:DPPO_DATA_DIR}/d3il/avoid_m3/train.pkl
+
+seed: 42
+device: cuda:0
+env: avoid
+mode: d58_r12 # M3, desired modes 5 and 8, required modes 1 and 2
+obs_dim: 4
+action_dim: 2
+transition_dim: ${action_dim}
+horizon_steps: 4
+cond_steps: 1
+num_modes: 5
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: d3il-${env}-pretrain
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_epochs: 10000
+  batch_size: 32
+  learning_rate: 1e-4
+  weight_decay: 1e-6
+  lr_scheduler:
+    first_cycle_steps: 10000
+    warmup_steps: 100
+    min_lr: 1e-5
+  epoch_start_ema: 20
+  update_ema_freq: 10
+  save_model_freq: 1000
+
+model:
+  _target_: model.common.gmm.GMMModel
+  network:
+    _target_: model.common.mlp_gmm.GMM_MLP
+    mlp_dims: [256, 256]  # smaller MLP for less overfitting
+    activation_type: ReLU
+    residual_style: False
+    fixed_std: 0.1
+    num_modes: ${num_modes}
+    cond_dim: ${obs_dim}
+    horizon_steps: ${horizon_steps}
+    transition_dim: ${transition_dim}
+  horizon_steps: ${horizon_steps}
+  device: ${device}
+
+ema:
+  decay: 0.995
+
+train_dataset:
+  _target_: agent.dataset.sequence.StitchedActionSequenceDataset
+  dataset_path: ${train_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}

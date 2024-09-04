@@ -1,0 +1,104 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.finetune.train_ppo_gaussian_agent.TrainPPOGaussianAgent
+
+name: ${env_name}_ft_gaussian_transformer_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: ${oc.env:DPPO_LOG_DIR}/robomimic-pretrain/lift/lift_pre_gaussian_transformer_ta4/2024-06-28_14-49-23/checkpoint/state_5000.pt
+robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
+
+seed: 42
+device: cuda:0
+env_name: lift
+obs_dim: 19
+action_dim: 7
+transition_dim: ${action_dim}
+cond_steps: 1
+horizon_steps: 4
+act_steps: 4
+
+env:
+  n_envs: 50
+  name: ${env_name}
+  best_reward_threshold_for_success: 1
+  max_episode_steps: 300
+  save_video: false
+  wrappers:
+    robomimic_lowdim:
+      normalization_path: ${normalization_path}
+      low_dim_keys: ['robot0_eef_pos',
+                    'robot0_eef_quat',
+                    'robot0_gripper_qpos',
+                    'object'] # same order of preprocessed observations
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: robomimic-${env_name}-finetune
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_train_itr: 300
+  n_critic_warmup_itr: 2
+  n_steps: 300
+  gamma: 0.999
+  actor_lr: 1e-5
+  actor_weight_decay: 0
+  actor_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-5
+  critic_lr: 1e-3
+  critic_weight_decay: 0
+  critic_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-3
+  save_model_freq: 100
+  val_freq: 10
+  render:
+    freq: 1
+    num: 0
+  # PPO specific
+  reward_scale_running: True
+  reward_scale_const: 1.0
+  gae_lambda: 0.95
+  batch_size: 7500
+  update_epochs: 10
+  vf_coef: 0.5
+  target_kl: 1
+
+model:
+  _target_: model.rl.gaussian_ppo.PPO_Gaussian
+  clip_ploss_coef: 0.01
+  randn_clip_value: 3
+  network_path: ${base_policy_path}
+  actor:
+    _target_: model.common.transformer.Gaussian_Transformer
+    transformer_embed_dim: 96
+    transformer_num_heads: 4
+    transformer_num_layers: 4
+    fixed_std: 0.1
+    learn_fixed_std: True
+    std_min: 0.01
+    std_max: 0.2
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    transition_dim: ${transition_dim}
+  critic:
+    _target_: model.common.critic.CriticObs
+    obs_dim: ${obs_dim}
+    mlp_dims: [256, 256, 256]
+    activation_type: Mish
+    residual_style: True
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}

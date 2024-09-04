@@ -1,0 +1,84 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.pretrain.train_gaussian_agent.TrainGaussianAgent
+
+name: ${env}_pre_gaussian_mlp_img_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+train_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env}-img/train.pkl
+
+seed: 42
+device: cuda:0
+env: transport
+obs_dim: 18  # proprioception only
+action_dim: 14
+transition_dim: ${action_dim}
+horizon_steps: 8
+cond_steps: 1
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: robomimic-${env}-pretrain
+  run: ${now:%H-%M-%S}_${name}
+
+shape_meta:
+  obs:
+    rgb:
+      shape: [3, 96, 96]
+    state:
+      shape: [9]
+  action: 
+    shape: [7]
+
+train:
+  n_epochs: 5000
+  batch_size: 256
+  learning_rate: 1e-4
+  weight_decay: 1e-6
+  lr_scheduler:
+    first_cycle_steps: 5000
+    warmup_steps: 100
+    min_lr: 1e-5
+  epoch_start_ema: 20
+  update_ema_freq: 10
+  save_model_freq: 500
+
+model:
+  _target_: model.common.gaussian.GaussianModel
+  network:
+    _target_: model.common.mlp_gaussian.Gaussian_VisionMLP
+    backbone:
+      _target_: model.common.vit.VitEncoder
+      obs_shape: ${shape_meta.obs.rgb.shape}
+      cfg:
+        patch_size: 8
+        depth: 1
+        embed_dim: 128
+        num_heads: 4
+        embed_style: embed2
+        embed_norm: 0
+    augment: True
+    num_img: 2
+    spatial_emb: 128
+    mlp_dims: [768, 768, 768]
+    residual_style: True
+    fixed_std: 0.1
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    transition_dim: ${transition_dim}
+  horizon_steps: ${horizon_steps}
+  device: ${device}
+
+ema:
+  decay: 0.995
+
+train_dataset:
+  _target_: agent.dataset.sequence.StitchedActionSequenceDataset
+  use_img: True
+  dataset_path: ${train_dataset_path}
+  horizon_steps: ${horizon_steps}
+  max_n_episodes: 100
+  cond_steps: ${cond_steps}
+  device: ${device}
