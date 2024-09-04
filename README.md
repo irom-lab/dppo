@@ -125,7 +125,7 @@ python script/train.py --config-name=ft_ppo_diffusion_mlp \
     --config-dir=cfg/furniture/finetune/one_leg_low
 ```
 
-**Note**: In Gym, Robomimic, and D3IL tasks, we run 40, 50, and 50 parallelized MuJoCo environments on CPU, respectively. If you would like to use fewer environments (given limited CPU threads, or GPU memory for rendering), you can, e.g., set `env.n_envs` half and `train.n_steps` double, thus the total number of steps collected in each iteration remains the same. Furniture-Bench tasks run IsaacGym on a single GPU.
+**Note**: In Gym, Robomimic, and D3IL tasks, we run 40, 50, and 50 parallelized MuJoCo environments on CPU, respectively. If you would like to use fewer environments (given limited CPU threads, or GPU memory for rendering), you can reduce `env.n_envs` and increase `train.n_steps`, so the total number of steps collected in each iteration (n_envs x n_steps) remains roughly the same. Try to set `train.n_steps` a multiple of `env.max_episode_steps`, and be aware that we only count episodes finished within an iteration for eval. Furniture-Bench tasks run IsaacGym on a single GPU.
 
 To fine-tune your own pre-trained policy instead, override `base_policy_path` to your own checkpoint, which is saved under `checkpoint/` of the pre-training directory. You can set `base_policy_path=<path>` in the command line when launching fine-tuning.
 
@@ -154,7 +154,7 @@ Our diffusion implementation is mostly based on [Diffuser](https://github.com/ja
 
 ### DDIM fine-tuning
 
-To use DDIM fine-tuning, set `denoising_steps=100` in pre-training and set `model.use_ddim=True`, `model.ddim_steps` to the desired number of total DDIM steps, and `ft_denoising_steps` to the desired number of fine-tuned DDIM steps. In our Furniture-Bench experiments we use `denoising_steps=100`, `model_ddim_steps=5`, and `ft_denoising_steps=5`.
+To use DDIM fine-tuning, set `denoising_steps=100` in pre-training and set `model.use_ddim=True`, `model.ddim_steps` to the desired number of total DDIM steps, and `ft_denoising_steps` to the desired number of fine-tuned DDIM steps. In our Furniture-Bench experiments we use `denoising_steps=100`, `model.ddim_steps=5`, and `ft_denoising_steps=5`.
 
 ## Adding your own dataset/environment
 
@@ -186,4 +186,3 @@ This repository is released under the MIT license. See [LICENSE](LICENSE).
 * [DQL, Wang et al.](https://github.com/Zhendong-Wang/Diffusion-Policies-for-Offline-RL): DQL baseline
 * [QSM, Psenka et al.](https://www.michaelpsenka.io/qsm/): QSM baseline
 * [Score SDE, Song et al.](https://github.com/yang-song/score_sde_pytorch/): diffusion exact likelihood
-
