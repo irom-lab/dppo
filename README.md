@@ -20,7 +20,7 @@
 
 1. Clone the repository
 ```console
-git clone git@github.com:allenzren/dppo.git
+git clone git@github.com:irom-lab/dppo.git
 cd dppo
 ```
 
