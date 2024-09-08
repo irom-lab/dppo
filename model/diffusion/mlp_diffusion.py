@@ -124,6 +124,9 @@ class VisionDiffusionMLP(nn.Module):
         else:
             state = cond["state"]
 
+        # convert rgb to float32 for augmentation
+        rgb = rgb.float()
+
         # get vit output - pass in two images separately
         if rgb.shape[1] == 6:  # TODO: properly handle multiple images
             rgb1 = rgb[:, :3]

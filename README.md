@@ -57,7 +57,7 @@ export DPPO_DATA_DIR=/path/to/data -->
 <!-- ``` -->
 
 Pre-training data for all tasks are pre-processed and can be found at [here](https://drive.google.com/drive/folders/1AXZvNQEKOrp0_jk1VLepKh_oHCg_9e3r?usp=drive_link). Pre-training script will download the data (including normalization statistics) automatically to the data directory.
-<!-- The data path follows `${DPPO_DATA_DIR}/<benchmark>/<task>/train.npz`, e.g., `${DPPO_DATA_DIR}/gym/hopper-medium-v2/train.pkl`. -->
+<!-- The data path follows `${DPPO_DATA_DIR}/<benchmark>/<task>/train.npz`, e.g., `${DPPO_DATA_DIR}/gym/hopper-medium-v2/train.npz`. -->
 
 ### Run pre-training with data
 All the configs can be found under `cfg/<env>/pretrain/`. A new WandB project may be created based on `wandb.project` in the config file; set `wandb=null` in the command line to test without WandB logging.
@@ -159,7 +159,8 @@ To use DDIM fine-tuning, set `denoising_steps=100` in pre-training and set `mode
 ## Adding your own dataset/environment
 
 ### Pre-training data
-Pre-training script is at [`agent/pretrain/train_diffusion_agent.py`](agent/pretrain/train_diffusion_agent.py). The pre-training dataset [loader](agent/dataset/sequence.py) assumes a pickle file containing a dictionary of `observations`, `actions`, and `traj_length`, where `observations` and `actions` have the shape of num_episode x max_episode_length x obs_dim/act_dim, and `traj_length` is a 1-D array. One pre-processing example can be found at [`script/process_robomimic_dataset.py`](script/process_robomimic_dataset.py).
+Pre-training script is at [`agent/pretrain/train_diffusion_agent.py`](agent/pretrain/train_diffusion_agent.py). The pre-training dataset [loader](agent/dataset/sequence.py) assumes a npz file containing numpy arrays `states`, `actions`, `images` (if using pixel) and `traj_length`, where `states` and `actions` have the shape of num_total_steps x obs_dim/act_dim, `images` num_total_steps x C (concatenated if multiple images) x H x W, and `traj_length` is a 1-D array for indexing across num_total_steps.
+<!-- One pre-processing example can be found at [`script/process_robomimic_dataset.py`](script/process_robomimic_dataset.py). -->
 
 **Note:** The current implementation does not support loading history observations (only using observation at the current timestep). If needed, you can modify [here](agent/dataset/sequence.py#L130-L131).
 

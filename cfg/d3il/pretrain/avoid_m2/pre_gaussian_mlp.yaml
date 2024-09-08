@@ -7,7 +7,7 @@ _target_: agent.pretrain.train_gaussian_agent.TrainGaussianAgent
 
 name: avoid_m2_pre_gaussian_mlp_ta${horizon_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/d3il-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-train_dataset_path: ${oc.env:DPPO_DATA_DIR}/d3il/avoid_m2/train.pkl
+train_dataset_path: ${oc.env:DPPO_DATA_DIR}/d3il/avoid_m2/train.npz
 
 seed: 42
 device: cuda:0
@@ -55,7 +55,7 @@ ema:
   decay: 0.995
 
 train_dataset:
-  _target_: agent.dataset.sequence.StitchedActionSequenceDataset
+  _target_: agent.dataset.sequence.StitchedSequenceDataset
   dataset_path: ${train_dataset_path}
   horizon_steps: ${horizon_steps}
   cond_steps: ${cond_steps}
