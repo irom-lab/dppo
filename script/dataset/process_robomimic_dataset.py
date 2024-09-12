@@ -304,7 +304,7 @@ def make_dataset(
 
     # Save to np file
     save_train_path = os.path.join(save_dir, save_name_prefix + "train.npz")
-    save_val_path = os.path.join(save_dir, save_name_prefix + "val.pkl")
+    save_val_path = os.path.join(save_dir, save_name_prefix + "val.npz")
     with open(save_train_path, "wb") as f:
         pickle.dump(out_train, f)
     with open(save_val_path, "wb") as f:

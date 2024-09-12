@@ -24,6 +24,7 @@ def make_async(
     normalization_path=None,
     furniture="one_leg",
     randomness="low",
+    obs_steps=1,
     act_steps=8,
     sparse_reward=False,
     # below for robomimic only
@@ -93,19 +94,16 @@ def make_async(
             stiffness=1_000,
             damping=200,
         )
-
         env = FurnitureRLSimEnvMultiStepWrapper(
             env,
-            n_obs_steps=1,
+            n_obs_steps=obs_steps,
             n_action_steps=act_steps,
-            reward_agg_method="sum",
             prev_action=False,
             reset_within_step=False,
             pass_full_observations=False,
             normalization_path=normalization_path,
             sparse_reward=sparse_reward,
         )
-
         return env
 
     # avoid import error due incompatible gym versions

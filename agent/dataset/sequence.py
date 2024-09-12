@@ -1,8 +1,6 @@
 """
 Pre-training data loader. Modified from https://github.com/jannerm/diffuser/blob/main/diffuser/datasets/sequence.py
 
-TODO: implement history observation
-
 No normalization is applied here --- we always normalize the data when pre-processing it with a different script, and the normalization info is also used in RL fine-tuning.
 
 """

@@ -5,8 +5,10 @@ Environment wrapper for Furniture-Bench environments.
 
 import gym
 import numpy as np
-from furniture_bench.envs.furniture_rl_sim_env import FurnitureRLSimEnv
 import torch
+from collections import deque
+
+from furniture_bench.envs.furniture_rl_sim_env import FurnitureRLSimEnv
 from furniture_bench.controllers.control_utils import proprioceptive_quat_to_6d_rotation
 from ..furniture_normalizer import LinearNormalizer
 from .multi_step import repeated_space
@@ -14,6 +16,32 @@ from .multi_step import repeated_space
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def stack_last_n_obs_dict(all_obs, n_steps):
+    """Apply padding"""
+    assert len(all_obs) > 0
+    all_obs = list(all_obs)
+    result = {
+        key: torch.zeros(
+            list(all_obs[-1][key].shape)[0:1]
+            + [n_steps]
+            + list(all_obs[-1][key].shape)[1:],
+            dtype=all_obs[-1][key].dtype,
+        ).to(
+            all_obs[-1][key].device
+        )  # add step dimension
+        for key in all_obs[-1]
+    }
+    start_idx = -min(n_steps, len(all_obs))
+    for key in all_obs[-1]:
+        result[key][:, start_idx:] = torch.concatenate(
+            [obs[key][:, None] for obs in all_obs[start_idx:]], dim=1
+        )  # add step dimension
+        if n_steps > len(all_obs):
+            # pad
+            result[key][:start_idx] = result[key][start_idx]
+    return result
 
 
 class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
@@ -26,7 +54,6 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
         n_action_steps=1,
         max_episode_steps=None,
         sparse_reward=False,
-        reward_agg_method="sum",  # never use other types
         reset_within_step=False,
         pass_full_observations=False,
         normalization_path=None,
@@ -35,8 +62,6 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
         assert (
             not reset_within_step
         ), "reset_within_step must be False for furniture envs"
-        assert n_obs_steps == 1, "n_obs_steps must be 1"
-        assert reward_agg_method == "sum", "reward_agg_method must be sum"
         assert (
             not pass_full_observations
         ), "pass_full_observations is not implemented yet"
@@ -68,6 +93,8 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
     ):
         """Resets the environment."""
         obs = self.env.reset()
+        self.obs = deque([obs], maxlen=max(self.n_obs_steps + 1, self.n_action_steps))
+        obs = stack_last_n_obs_dict(self.obs, self.n_obs_steps)
         nobs = self.process_obs(obs)
         self.best_reward = torch.zeros(self.env.num_envs).to(self.device)
         self.done = list()
@@ -118,6 +145,7 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
         for i in range(self.n_action_steps):
             # The dimensions of the action_chunk are (num_envs, chunk_size, action_dim)
             obs, reward, done, info = self.env.step(action_chunk[:, i, :])
+            self.obs.append(obs)
 
             # track raw reward
             sparse_reward += reward.squeeze()
@@ -130,21 +158,17 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
 
             dones = dones | done.squeeze()
 
+        obs = stack_last_n_obs_dict(self.obs, self.n_obs_steps)
         return obs, sparse_reward, dense_reward, dones, info
 
     def process_obs(self, obs: torch.Tensor) -> np.ndarray:
-        robot_state = obs["robot_state"]
-
         # Convert the robot state to have 6D pose
+        robot_state = obs["robot_state"]
         robot_state = proprioceptive_quat_to_6d_rotation(robot_state)
 
         parts_poses = obs["parts_poses"]
-
         obs = torch.cat([robot_state, parts_poses], dim=-1)
+
         nobs = self.normalizer(obs, "observations", forward=True)
         nobs = torch.clamp(nobs, -5, 5)
-
-        # Insert a dummy dimension for the n_obs_steps (n_envs, obs_dim) -> (n_envs, n_obs_steps, obs_dim)
-        nobs = nobs.unsqueeze(1).cpu().numpy()
-
-        return nobs
+        return nobs.cpu().numpy()  # (n_envs, n_obs_steps, obs_dim)
