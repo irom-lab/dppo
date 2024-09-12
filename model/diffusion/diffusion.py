@@ -8,7 +8,7 @@ Annotated DDIM/DDPM: https://nn.labml.ai/diffusion/stable_diffusion/sampler/ddpm
 
 """
 
-from typing import Optional, Union
+from typing import Union
 import logging
 import torch
 from torch import nn
@@ -17,13 +17,12 @@ import torch.nn.functional as F
 log = logging.getLogger(__name__)
 
 from model.diffusion.sampling import (
-    make_timesteps,
     extract,
     cosine_beta_schedule,
 )
 
 from collections import namedtuple
-Sample = namedtuple("Sample", "trajectories values chains")
+Sample = namedtuple("Sample", "trajectories chains")
 
 
 class DiffusionModel(nn.Module):
@@ -34,9 +33,7 @@ class DiffusionModel(nn.Module):
         horizon_steps,
         obs_dim,
         action_dim,
-        transition_dim,
         network_path=None,
-        cond_steps=1,
         device="cuda:0",
         # DDPM parameters
         denoising_steps=100,
@@ -53,11 +50,9 @@ class DiffusionModel(nn.Module):
         self.horizon_steps = horizon_steps
         self.obs_dim = obs_dim
         self.action_dim = action_dim
-        self.transition_dim = transition_dim
         self.denoising_steps = int(denoising_steps)
         self.denoised_clip_value = denoised_clip_value
         self.predict_epsilon = predict_epsilon
-        self.cond_steps = cond_steps
         self.use_ddim = use_ddim
         self.ddim_steps = ddim_steps
 
@@ -216,52 +211,11 @@ class DiffusionModel(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        cond: Optional[torch.Tensor],
+        cond,
         return_chain=True,
+        **kwargs,
     ):
-        """
-        Forward sampling through denoising steps.
-        
-        Args:
-            cond: (batch_size, horizon, transition_dim)
-            return_chain: whether to return the chain of samples or only the final denoised sample
-        Return:
-            Sample: namedtuple with fields:
-                trajectories: (batch_size, horizon_steps, transition_dim)
-                values: (batch_size, )
-                chain: (batch_size, denoising_steps + 1, horizon_steps, transition_dim)
-        """
-        device = self.betas.device
-        if isinstance(cond, dict):
-            B = cond[list(cond.keys())[0]].shape[0]
-        else:
-            B = cond.shape[0]
-            cond = cond[:, : self.cond_steps].reshape(B, -1)
-        shape = (B, self.horizon_steps, self.transition_dim)
-
-        # Loop
-        x = torch.randn(shape, device=device)
-        chain = [x] if return_chain else None
-        if self.use_ddim:
-            t_all = self.ddim_t
-        else:
-            t_all = list(reversed(range(self.denoising_steps)))
-        for i, t in enumerate(t_all):
-            t_b = make_timesteps(B, t, device)
-            index_b = make_timesteps(B, i, device)
-            mu, logvar = self.p_mean_var(x=x, t=t_b, cond=cond, index=index_b)
-            std = torch.exp(0.5 * logvar)
-
-            # no noise when t == 0
-            noise = torch.randn_like(x)
-            noise[t == 0] = 0
-            x = mu + std * noise
-            if return_chain:
-                chain.append(x)
-        if return_chain:
-            chain = torch.stack(chain, dim=1)
-        values = torch.zeros(len(x), device=x.device)   # not considering the value for now
-        return Sample(x, values, chain)
+        raise NotImplementedError
 
     # ---------- Supervised training ----------#
 
@@ -275,23 +229,18 @@ class DiffusionModel(nn.Module):
     def p_losses(
         self,
         x_start,
-        obs_cond: Union[dict, torch.Tensor],
+        cond: Union[dict, torch.Tensor],
         t,
     ):
         """
         If predicting epsilon: E_{t, x0, ε} [||ε - ε_θ(√α̅ₜx0 + √(1-α̅ₜ)ε, t)||²
 
         Args:
-            x_start: (batch_size, horizon_steps, transition_dim)
-            obs_cond: dict with keys as step and value as observation
+            x_start: (batch_size, horizon_steps, action_dim)
+            cond: dict with keys as step and value as observation
             t: batch of integers
         """
         device = x_start.device
-        B = x_start.shape[0]
-        if isinstance(obs_cond[0], dict):
-            cond = obs_cond[0]  # keep the dictionary and the network will extract img and prio
-        else:
-            cond = obs_cond[0].reshape(B, -1)
 
         # Forward process
         noise = torch.randn_like(x_start, device=device)

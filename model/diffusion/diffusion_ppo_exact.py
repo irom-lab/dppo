@@ -3,6 +3,11 @@ Diffusion policy gradient with exact likelihood estimation.
 
 Based on score_sde_pytorch https://github.com/yang-song/score_sde_pytorch
 
+To: observation sequence length
+Ta: action chunk size
+Do: observation dimension
+Da: action dimension
+
 """
 
 import torch
@@ -52,13 +57,12 @@ class PPOExactDiffusion(PPODiffusion):
             num_epsilon=sde_num_epsilon,
         )
 
-    def get_exact_logprobs(self, obs, samples):
+    def get_exact_logprobs(self, cond, samples):
         """Use torchdiffeq
 
-        samples: B x horizon x transition_dim
+        samples: (B x Ta x Da)
         """
         # TODO: image input
-        cond = obs.reshape(-1, self.obs_dim)
         return self.likelihood_fn(
             self.actor,
             self.actor_ft,
@@ -79,6 +83,17 @@ class PPOExactDiffusion(PPODiffusion):
         use_bc_loss=False,
         **kwargs,
     ):
+        """
+        PPO loss
+
+        obs: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+        samples: (B, Ta, Da)
+        returns: (B, )
+        values: (B, )
+        advantages: (B,)
+        oldlogprobs: (B, )
+        """
         # Get new logprobs for final x
         newlogprobs = self.get_exact_logprobs(obs, samples)
         newlogprobs = newlogprobs.clamp(min=-5, max=2)

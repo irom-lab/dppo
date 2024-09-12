@@ -71,8 +71,7 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
         nobs = self.process_obs(obs)
         self.best_reward = torch.zeros(self.env.num_envs).to(self.device)
         self.done = list()
-
-        return nobs
+        return {"state": nobs}
 
     def reset_arg(self, options_list=None):
         return self.reset()
@@ -80,7 +79,6 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
     def reset_one_arg(self, env_ind=None, options=None):
         if env_ind is not None:
             env_ind = torch.tensor([env_ind], device=self.device)
-
         return self.reset()
 
     def step(self, action: np.ndarray):
@@ -109,7 +107,7 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
         nobs: np.ndarray = self.process_obs(obs)
         done: np.ndarray = done.squeeze().cpu().numpy()
 
-        return (nobs, reward, done, info)
+        return {"state": nobs}, reward, done, info
 
     def _inner_step(self, action_chunk: torch.Tensor):
         dones = torch.zeros(

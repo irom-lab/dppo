@@ -93,11 +93,12 @@ def get_likelihood_fn(
         """Compute an unbiased estimate to the log-likelihood in bits/dim.
 
         Args:
-          model: A score model.
-          data: A PyTorch tensor. B x horizon x transition_dim
+            cond: dict with key state/rgb; more recent obs at the end
+                state: (B, To, Do)
+            data: (B x Ta x Da)
 
         Returns:
-          logprob: B
+            logprob: (B,)
         """
         shape = data.shape
         B, H, A = shape
@@ -118,7 +119,9 @@ def get_likelihood_fn(
             raise NotImplementedError(f"Hutchinson type {hutchinson_type} unknown.")
 
         # repeat for expectation
-        cond_eps = cond.repeat_interleave(num_epsilon, dim=0)
+        cond_eps = {
+            key: cond[key].repeat_interleave(num_epsilon, dim=0) for key in cond
+        }
 
         def ode_func(t, x):
             x = x[:, :-1]
@@ -132,7 +135,7 @@ def get_likelihood_fn(
                 model_fn = model_ft
             else:
                 model_fn = model
-            x = x.view(shape)  # B x horizon x transition_dim
+            x = x.view(shape)  # B x horizon x action_dim
             drift = drift_fn(
                 model_fn,
                 x,

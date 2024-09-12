@@ -20,6 +20,7 @@ transition_dim: ${action_dim}
 denoising_steps: 100
 ft_denoising_steps: 5
 cond_steps: 1
+img_cond_steps: 1
 horizon_steps: 4
 act_steps: 4
 use_ddim: True
@@ -121,6 +122,7 @@ model:
     backbone:
       _target_: model.common.vit.VitEncoder
       obs_shape: ${shape_meta.obs.rgb.shape}
+      num_channel: ${eval:'${shape_meta.obs.rgb.shape[0]} * ${img_cond_steps}'} # each image patch is history concatenated
       cfg:
         patch_size: 8
         depth: 1
@@ -133,6 +135,7 @@ model:
     time_dim: 32
     mlp_dims: [768, 768, 768]
     residual_style: True
+    img_cond_steps: ${img_cond_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
@@ -143,6 +146,7 @@ model:
     backbone:
       _target_: model.common.vit.VitEncoder
       obs_shape: ${shape_meta.obs.rgb.shape}
+      num_channel: ${eval:'${shape_meta.obs.rgb.shape[0]} * ${img_cond_steps}'} # each image patch is history concatenated
       cfg:
         patch_size: 8
         depth: 1
@@ -150,15 +154,14 @@ model:
         num_heads: 4
         embed_style: embed2
         embed_norm: 0
-    obs_dim: ${obs_dim}
+    img_cond_steps: ${img_cond_steps}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     mlp_dims: [256, 256, 256]
     activation_type: Mish
     residual_style: True
   ft_denoising_steps: ${ft_denoising_steps}
-  transition_dim: ${transition_dim}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  cond_steps: ${cond_steps}
   denoising_steps: ${denoising_steps}
   device: ${device}

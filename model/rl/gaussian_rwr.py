@@ -29,9 +29,8 @@ class RWR_Gaussian(GaussianModel):
 
     # override
     def loss(self, actions, obs, reward_weights):
-        cond = obs
-        B = cond.shape[0]
-        means, scales = self.network(cond)
+        B = len(obs)
+        means, scales = self.network(obs)
 
         dist = D.Normal(loc=means, scale=scales)
         log_prob = dist.log_prob(actions.view(B, -1)).mean(-1)
@@ -42,16 +41,8 @@ class RWR_Gaussian(GaussianModel):
     # override
     @torch.no_grad()
     def forward(self, cond, deterministic=False, **kwargs):
-        """
-        Args:
-            cond: (batch_size, horizon, obs_dim)
-
-        Return:
-            actions: (batch_size, horizon_steps, transition_dim)
-        """
-        B = cond.shape[0]
         actions = super().forward(
-            cond=cond.view(B, -1),
+            cond=cond,
             deterministic=deterministic,
             randn_clip_value=self.randn_clip_value,
         )

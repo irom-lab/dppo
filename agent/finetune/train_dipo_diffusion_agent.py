@@ -4,6 +4,9 @@ Model-free online RL with DIffusion POlicy (DIPO)
 Applies action gradient to perturb actions towards maximizer of Q-function.
 
 a_t <- a_t + \eta * \grad_a Q(s, a)
+
+Do not support pixel input right now.
+
 """
 
 import os
@@ -90,6 +93,7 @@ class TrainDIPODiffusionAgent(TrainAgent):
         # Start training loop
         timer = Timer()
         run_results = []
+        last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
 
@@ -104,9 +108,10 @@ class TrainDIPODiffusionAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
             self.model.eval() if eval_mode else self.model.train()
-            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
+            last_itr_eval = eval_mode
 
-            # Reset env at the beginning of an iteration
+            # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
+            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
@@ -114,7 +119,6 @@ class TrainDIPODiffusionAgent(TrainAgent):
                 firsts_trajs[0] = (
                     done_venv  # if done at the end of last iteration, then the envs are just reset
                 )
-            last_itr_eval = eval_mode
             reward_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
@@ -124,11 +128,14 @@ class TrainDIPODiffusionAgent(TrainAgent):
 
                 # Select action
                 with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     samples = (
                         self.model(
-                            cond=torch.from_numpy(prev_obs_venv)
-                            .float()
-                            .to(self.device),
+                            cond=cond,
                             deterministic=eval_mode,
                         )
                         .cpu()
@@ -144,8 +151,8 @@ class TrainDIPODiffusionAgent(TrainAgent):
 
                 # add to buffer
                 for i in range(self.n_envs):
-                    obs_buffer.append(prev_obs_venv[i])
-                    next_obs_buffer.append(obs_venv[i])
+                    obs_buffer.append(prev_obs_venv["state"][i])
+                    next_obs_buffer.append(obs_venv["state"][i])
                     action_buffer.append(action_venv[i])
                     reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
                     done_buffer.append(done_venv[i])
@@ -191,8 +198,8 @@ class TrainDIPODiffusionAgent(TrainAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
+            # Update models
             if not eval_mode:
-
                 num_batch = self.replay_ratio
 
                 # Critic learning
@@ -231,7 +238,12 @@ class TrainDIPODiffusionAgent(TrainAgent):
 
                     # Update critic
                     loss_critic = self.model.loss_critic(
-                        obs_b, next_obs_b, actions_b, rewards_b, dones_b, self.gamma
+                        {"state": obs_b},
+                        {"state": next_obs_b},
+                        actions_b,
+                        rewards_b,
+                        dones_b,
+                        self.gamma,
                     )
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
@@ -239,7 +251,6 @@ class TrainDIPODiffusionAgent(TrainAgent):
 
                 # Actor learning
                 for _ in range(num_batch):
-
                     # Sample batch
                     inds = np.random.choice(len(obs_buffer), self.batch_size)
                     obs_b = (
@@ -265,7 +276,9 @@ class TrainDIPODiffusionAgent(TrainAgent):
                     )
                     for _ in range(self.action_gradient_steps):
                         actions_flat.requires_grad_(True)
-                        q_values_1, q_values_2 = self.model.critic(obs_b, actions_flat)
+                        q_values_1, q_values_2 = self.model.critic(
+                            {"state": obs_b}, actions_flat
+                        )
                         q_values = torch.min(q_values_1, q_values_2)
                         action_opt_loss = -q_values.sum()
 
@@ -291,7 +304,7 @@ class TrainDIPODiffusionAgent(TrainAgent):
                         )
 
                     # Update policy with collected trajectories
-                    loss = self.model.loss(guided_action.detach(), {0: obs_b})
+                    loss = self.model.loss(guided_action.detach(), {"state": obs_b})
                     self.actor_optimizer.zero_grad()
                     loss.backward()
                     if self.itr >= self.n_critic_warmup_itr:
@@ -316,6 +329,7 @@ class TrainDIPODiffusionAgent(TrainAgent):
                 }
             )
             if self.itr % self.log_freq == 0:
+                time = timer()
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -336,7 +350,7 @@ class TrainDIPODiffusionAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{timer():8.4f}"
+                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
@@ -352,7 +366,7 @@ class TrainDIPODiffusionAgent(TrainAgent):
                     run_results[-1]["loss"] = loss
                     run_results[-1]["loss_critic"] = loss_critic
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = timer()
+                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

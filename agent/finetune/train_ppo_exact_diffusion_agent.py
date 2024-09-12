@@ -1,6 +1,8 @@
 """
 Use diffusion exact likelihood for policy gradient.
 
+Do not support pixel input yet.
+
 """
 
 import os
@@ -10,6 +12,7 @@ import numpy as np
 import torch
 import logging
 import wandb
+import math
 
 log = logging.getLogger(__name__)
 from util.timer import Timer
@@ -43,6 +46,7 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
 
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
+            eval_mode = False
             self.model.eval() if eval_mode else self.model.train()
             last_itr_eval = eval_mode
 
@@ -58,7 +62,9 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                 )
 
             # Holder
-            obs_trajs = np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+            obs_trajs = {
+                "state": np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+            }
             samples_trajs = np.empty(
                 (
                     0,
@@ -79,8 +85,8 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
             reward_trajs = np.empty((0, self.n_envs))
             obs_full_trajs = np.empty((0, self.n_envs, self.obs_dim))
             obs_full_trajs = np.vstack(
-                (obs_full_trajs, prev_obs_venv[None].squeeze(2))
-            )  # remove cond_step dim
+                (obs_full_trajs, prev_obs_venv["state"][:, -1][None])
+            )  # save current obs
 
             # Collect a set of trajectories from env
             for step in range(self.n_steps):
@@ -89,8 +95,13 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
 
                 # Select action
                 with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     samples = self.model(
-                        cond=torch.from_numpy(prev_obs_venv).float().to(self.device),
+                        cond=cond,
                         deterministic=eval_mode,
                         return_chain=True,
                     )
@@ -101,21 +112,23 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                         samples.chains.cpu().numpy()
                     )  # n_env x denoising x horizon x act
                 action_venv = output_venv[:, : self.act_steps]
+                samples_trajs = np.vstack((samples_trajs, output_venv[None]))
 
                 # Apply multi-step action
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
-                if self.save_full_observations:
-                    obs_full_venv = np.vstack(
-                        [info["full_obs"][None] for info in info_venv]
-                    )  # n_envs x n_act_steps x obs_dim
+                if self.save_full_observations:  # state-only
+                    obs_full_venv = np.array(
+                        [info["full_obs"]["state"] for info in info_venv]
+                    )  # n_envs x act_steps x obs_dim
                     obs_full_trajs = np.vstack(
                         (obs_full_trajs, obs_full_venv.transpose(1, 0, 2))
                     )
-                obs_trajs = np.vstack((obs_trajs, prev_obs_venv[None]))
+                obs_trajs["state"] = np.vstack(
+                    (obs_trajs["state"], prev_obs_venv["state"][None])
+                )
                 chains_trajs = np.vstack((chains_trajs, chains_venv[None]))
-                samples_trajs = np.vstack((samples_trajs, output_venv[None]))
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
                 dones_trajs = np.vstack((dones_trajs, done_venv[None]))
                 firsts_trajs[step + 1] = done_venv
@@ -158,15 +171,25 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
-            # Update
+            # Update models
             if not eval_mode:
                 with torch.no_grad():
-                    # Calculate value and logprobs - split into batches to prevent out of memory
-                    obs_t = einops.rearrange(
-                        torch.from_numpy(obs_trajs).float().to(self.device),
-                        "s e h d -> (s e) h d",
+                    obs_trajs["state"] = (
+                        torch.from_numpy(obs_trajs["state"]).float().to(self.device)
                     )
-                    obs_ts = torch.split(obs_t, self.logprob_batch_size, dim=0)
+
+                    # Calculate value and logprobs - split into batches to prevent out of memory
+                    num_split = math.ceil(
+                        self.n_envs * self.n_steps / self.logprob_batch_size
+                    )
+                    obs_ts = [{} for _ in range(num_split)]
+                    obs_k = einops.rearrange(
+                        obs_trajs["state"],
+                        "s e ... -> (s e) ...",
+                    )
+                    obs_ts_k = torch.split(obs_k, self.logprob_batch_size, dim=0)
+                    for i, obs_t in enumerate(obs_ts_k):
+                        obs_ts[i]["state"] = obs_t
                     values_trajs = np.empty((0, self.n_envs))
                     for obs in obs_ts:
                         values = self.model.critic(obs).cpu().numpy().flatten()
@@ -193,7 +216,11 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                         reward_trajs = reward_trajs_transpose.T
 
                     # bootstrap value with GAE if not done - apply reward scaling with constant if specified
-                    obs_venv_ts = torch.from_numpy(obs_venv).float().to(self.device)
+                    obs_venv_ts = {
+                        "state": torch.from_numpy(obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     with torch.no_grad():
                         next_value = (
                             self.model.critic(obs_venv_ts).reshape(1, -1).cpu().numpy()
@@ -224,10 +251,12 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                     returns_trajs = advantages_trajs + values_trajs
 
                 # k for environment step
-                obs_k = einops.rearrange(
-                    torch.tensor(obs_trajs).float().to(self.device),
-                    "s e h d -> (s e) h d",
-                )
+                obs_k = {
+                    "state": einops.rearrange(
+                        obs_trajs["state"],
+                        "s e ... -> (s e) ...",
+                    )
+                }
                 samples_k = einops.rearrange(
                     torch.tensor(samples_trajs).float().to(self.device),
                     "s e h d -> (s e) h d",
@@ -257,7 +286,7 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                         start = batch * self.batch_size
                         end = start + self.batch_size
                         inds_b = inds_k[start:end]  # b for batch
-                        obs_b = obs_k[inds_b]
+                        obs_b = {"state": obs_k["state"][inds_b]}
                         samples_b = samples_k[inds_b]
                         returns_b = returns_k[inds_b]
                         values_b = values_k[inds_b]
@@ -318,7 +347,7 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                     np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
                 )
 
-            # Plot state trajectories
+            # Plot state trajectories (only in D3IL)
             if (
                 self.itr % self.render_freq == 0
                 and self.n_render > 0
@@ -354,6 +383,7 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                 run_results[-1]["chains_trajs"] = chains_trajs
                 run_results[-1]["reward_trajs"] = reward_trajs
             if self.itr % self.log_freq == 0:
+                time = timer()
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -374,7 +404,7 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | reward {avg_episode_reward:8.4f} | t:{timer():8.4f}"
+                        f"{self.itr}: loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | reward {avg_episode_reward:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
@@ -399,7 +429,7 @@ class TrainPPOExactDiffusionAgent(TrainPPODiffusionAgent):
                     run_results[-1]["clip_frac"] = np.mean(clipfracs)
                     run_results[-1]["explained_variance"] = explained_var
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = timer()
+                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

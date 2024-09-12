@@ -42,12 +42,13 @@ class IDQLDiffusion(RWRDiffusion):
         # assign actor
         self.actor = self.network
 
+    # ---------- RL training ----------#
+
     def compute_advantages(self, obs, actions):
 
-        # get current Q-function
-        actions_flat = torch.flatten(actions, start_dim=-2)
-        with torch.no_grad():  # no gradients for q-function when we update value function
-            current_q1, current_q2 = self.target_q(obs, actions_flat)
+        # get current Q-function, stop gradient
+        with torch.no_grad():
+            current_q1, current_q2 = self.target_q(obs, actions)
         q = torch.min(current_q1, current_q2)
 
         # get the current V-function
@@ -59,7 +60,6 @@ class IDQLDiffusion(RWRDiffusion):
         return adv
 
     def loss_critic_v(self, obs, actions):
-
         adv = self.compute_advantages(obs, actions)
 
         # get the value loss
@@ -70,11 +70,10 @@ class IDQLDiffusion(RWRDiffusion):
     def loss_critic_q(self, obs, next_obs, actions, rewards, dones, gamma):
 
         # get current Q-function
-        actions_flat = torch.flatten(actions, start_dim=-2)
-        current_q1, current_q2 = self.critic_q(obs, actions_flat)
+        current_q1, current_q2 = self.critic_q(obs, actions)
 
-        # get the next V-function
-        with torch.no_grad():  # no gradients for value function when we update q function
+        # get the next V-function, stop gradient
+        with torch.no_grad():
             next_v = self.critic_v(next_obs)
 
         # terminal state mask
@@ -98,8 +97,35 @@ class IDQLDiffusion(RWRDiffusion):
     def update_target_critic(self, tau):
         soft_update(self.target_q, self.critic_q, tau)
 
+    # override
+    def p_losses(
+        self,
+        x_start,
+        cond,
+        t,
+    ):
+        device = x_start.device
+
+        # Forward process
+        noise = torch.randn_like(x_start, device=device)
+        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+
+        # Predict
+        x_recon = self.network(x_noisy, t, cond=cond)
+
+        # Loss with mask
+        if self.predict_epsilon:
+            loss = F.mse_loss(x_recon, noise, reduction="none")
+        else:
+            loss = F.mse_loss(x_recon, x_start, reduction="none")
+        loss = einops.reduce(loss, "b h d -> b", "mean")
+        return loss.mean()
+
+    # ---------- Sampling ----------#``
+
+    # override
     @torch.no_grad()
-    def forward(  # override
+    def forward(
         self,
         cond,
         deterministic=False,
@@ -107,23 +133,23 @@ class IDQLDiffusion(RWRDiffusion):
         critic_hyperparam=0.7,  # sampling weight for implicit policy
         use_expectile_exploration=True,
     ):
+        """assume state-only, no rgb in cond"""
         # repeat obs num_sample times along dim 0
-        cond_shape_repeat_dims = tuple(1 for _ in cond.shape)
-        B, T, D = cond.shape
+        cond_shape_repeat_dims = tuple(1 for _ in cond["state"].shape)
+        B, T, D = cond["state"].shape
         S = num_sample
-        cond_repeat = cond[None].repeat(num_sample, *cond_shape_repeat_dims)
+        cond_repeat = cond["state"][None].repeat(num_sample, *cond_shape_repeat_dims)
         cond_repeat = cond_repeat.view(-1, T, D)  # [B*S, T, D]
 
         # for eval, use less noisy samples --- there is still DDPM noise, but final action uses small min_sampling_std
         samples = super(IDQLDiffusion, self).forward(
-            cond_repeat,
+            {"state": cond_repeat},
             deterministic=deterministic,
         )
         _, H, A = samples.shape
 
         # get current Q-function
-        actions_flat = torch.flatten(samples, start_dim=-2)
-        current_q1, current_q2 = self.target_q(cond_repeat, actions_flat)
+        current_q1, current_q2 = self.target_q({"state": cond_repeat}, samples)
         q = torch.min(current_q1, current_q2)
         q = q.view(S, B)
 
@@ -141,7 +167,7 @@ class IDQLDiffusion(RWRDiffusion):
         # Sample as an implicit policy for exploration
         else:
             # get the current value function for probabilistic exploration
-            current_v = self.critic_v(cond_repeat)
+            current_v = self.critic_v({"state": cond_repeat})
             v = current_v.view(S, B)
             adv = q - v
 
@@ -164,34 +190,3 @@ class IDQLDiffusion(RWRDiffusion):
         # squeeze dummy dimension
         samples = samples_best[0]
         return samples
-
-    # override
-    def p_losses(
-        self,
-        x_start,
-        obs_cond,
-        t,
-    ):
-        device = x_start.device
-        B, T, D = x_start.shape
-
-        # handle different ways of passing observation
-        if isinstance(obs_cond[0], dict):
-            cond = obs_cond[0]
-        else:
-            cond = obs_cond.reshape(B, -1)
-
-        # Forward process
-        noise = torch.randn_like(x_start, device=device)
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-
-        # Predict
-        x_recon = self.network(x_noisy, t, cond=cond)
-
-        # Loss with mask
-        if self.predict_epsilon:
-            loss = F.mse_loss(x_recon, noise, reduction="none")
-        else:
-            loss = F.mse_loss(x_recon, x_start, reduction="none")
-        loss = einops.reduce(loss, "b h d -> b", "mean")
-        return loss.mean()

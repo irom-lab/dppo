@@ -1,6 +1,8 @@
 """
 Reward-weighted regression (RWR) for diffusion policy.
 
+Do not support pixel input right now.
+
 """
 
 import os
@@ -54,6 +56,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
         # Start training loop
         timer = Timer()
         run_results = []
+        last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
 
@@ -68,9 +71,10 @@ class TrainRWRDiffusionAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
             self.model.eval() if eval_mode else self.model.train()
-            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
+            last_itr_eval = eval_mode
 
-            # Reset env at the beginning of an iteration
+            # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
+            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
@@ -78,11 +82,11 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 firsts_trajs[0] = (
                     done_venv  # if done at the end of last iteration, then the envs are just reset
                 )
-            last_itr_eval = eval_mode
-            reward_trajs = np.empty((0, self.n_envs))
 
-            # Holders
-            obs_trajs = np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+            # Holder
+            obs_trajs = {
+                "state": np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+            }
             samples_trajs = np.empty(
                 (
                     0,
@@ -91,6 +95,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
                     self.action_dim,
                 )
             )
+            reward_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
             for step in range(self.n_steps):
@@ -99,23 +104,28 @@ class TrainRWRDiffusionAgent(TrainAgent):
 
                 # Select action
                 with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     samples = (
                         self.model(
-                            cond=torch.from_numpy(prev_obs_venv)
-                            .float()
-                            .to(self.device),
+                            cond=cond,
                             deterministic=eval_mode,
                         )
                         .cpu()
                         .numpy()
                     )  # n_env x horizon x act
                 action_venv = samples[:, : self.act_steps]
-                obs_trajs = np.vstack((obs_trajs, prev_obs_venv[None]))
                 samples_trajs = np.vstack((samples_trajs, samples[None]))
 
                 # Apply multi-step action
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
+                )
+                obs_trajs["state"] = np.vstack(
+                    (obs_trajs["state"], prev_obs_venv["state"][None])
                 )
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
                 firsts_trajs[step + 1] = done_venv
@@ -133,7 +143,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
             if len(episodes_start_end) > 0:
                 # Compute transitions for completed trajectories
                 obs_trajs_split = [
-                    obs_trajs[start : end + 1, env_ind]
+                    {"state": obs_trajs["state"][start : end + 1, env_ind]}
                     for env_ind, start, end in episodes_start_end
                 ]
                 samples_trajs_split = [
@@ -183,17 +193,20 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
-            # Update
+            # Update models
             if not eval_mode:
 
                 # Tensorize data and put them to device
                 # k for environment step
-                obs_k = (
-                    torch.tensor(np.concatenate(obs_trajs_split))
+                obs_k = {
+                    "state": torch.tensor(
+                        np.concatenate(
+                            [obs_traj["state"] for obs_traj in obs_trajs_split]
+                        )
+                    )
                     .float()
                     .to(self.device)
-                )
-
+                }
                 samples_k = (
                     torch.tensor(np.concatenate(samples_trajs_split))
                     .float()
@@ -204,18 +217,14 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 returns_trajs_split = (
                     returns_trajs_split - np.mean(returns_trajs_split)
                 ) / (returns_trajs_split.std() + 1e-3)
-
                 rewards_k = (
                     torch.tensor(returns_trajs_split)
                     .float()
                     .to(self.device)
                     .reshape(-1)
                 )
-
                 rewards_k_scaled = torch.exp(self.beta * rewards_k)
                 rewards_k_scaled.clamp_(max=self.max_reward_weight)
-
-                # rewards_k_scaled = rewards_k_scaled / rewards_k_scaled.mean()
 
                 # Update policy and critic
                 total_steps = len(rewards_k_scaled)
@@ -229,7 +238,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
                         start = batch * self.batch_size
                         end = start + self.batch_size
                         inds_b = inds_k[start:end]  # b for batch
-                        obs_b = obs_k[inds_b]
+                        obs_b = {"state": obs_k["state"][inds_b]}
                         samples_b = samples_k[inds_b]
                         rewards_b = rewards_k_scaled[inds_b]
 
@@ -261,6 +270,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 }
             )
             if self.itr % self.log_freq == 0:
+                time = timer()
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -281,7 +291,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{timer():8.4f}"
+                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
@@ -295,7 +305,7 @@ class TrainRWRDiffusionAgent(TrainAgent):
                         )
                     run_results[-1]["loss"] = loss
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = timer()
+                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

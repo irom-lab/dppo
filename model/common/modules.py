@@ -67,3 +67,21 @@ class RandomShiftsAug:
         return nn.functional.grid_sample(
             x, grid, padding_mode="zeros", align_corners=False
         )
+
+
+# test random shift
+if __name__ == "__main__":
+    from PIL import Image
+    import requests
+    import numpy as np
+
+    image_url = "https://rail.eecs.berkeley.edu/datasets/bridge_release/raw/bridge_data_v2/datacol2_toykitchen7/drawer_pnp/01/2023-04-19_09-18-15/raw/traj_group0/traj0/images0/im_30.jpg"
+    image = Image.open(requests.get(image_url, stream=True).raw)
+    image = image.resize((96, 96))
+
+    image = torch.tensor(np.array(image)).permute(2, 0, 1).unsqueeze(0).float()
+    aug = RandomShiftsAug(pad=4)
+    image_aug = aug(image)
+    image_aug = image_aug.squeeze().permute(1, 2, 0).numpy()
+    image_aug = Image.fromarray(image_aug.astype(np.uint8))
+    image_aug.show()

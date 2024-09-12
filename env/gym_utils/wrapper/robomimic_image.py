@@ -90,9 +90,7 @@ class RobomimicImageWrapper(gym.Env):
         action = (action + 1) / 2  # [-1, 1] -> [0, 1]
         return action * (self.action_max - self.action_min) + self.action_min
 
-    def get_observation(self, raw_obs=None):
-        if raw_obs is None:
-            raw_obs = self.env.get_observation()
+    def get_observation(self, raw_obs):
         obs = {"rgb": None, "state": None}  # stack rgb if multiple cameras
         for key in self.obs_keys:
             if key in self.image_keys:

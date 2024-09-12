@@ -26,12 +26,6 @@ def extract(a, t, x_shape):
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 
-def apply_obs_conditioning(x, conditions, action_dim):
-    for t, val in conditions.items():
-        x[:, t, action_dim:] = val.clone()
-    return x
-
-
 def make_timesteps(batch_size, i, device):
     t = torch.full((batch_size,), i, device=device, dtype=torch.long)
     return t

@@ -47,7 +47,7 @@ model:
     residual_style: False
     fixed_std: 0.1
     num_modes: ${num_modes}
-    cond_dim: ${obs_dim}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
   horizon_steps: ${horizon_steps}

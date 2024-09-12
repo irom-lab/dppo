@@ -16,20 +16,34 @@ class GMMModel(torch.nn.Module):
         self,
         network,
         horizon_steps,
+        network_path=None,
         device="cuda:0",
         **kwargs,
     ):
         super().__init__()
         self.device = device
         self.network = network.to(device)
-        self.horizon_steps = horizon_steps
+        if network_path is not None:
+            checkpoint = torch.load(
+                network_path, map_location=self.device, weights_only=True
+            )
+            self.load_state_dict(
+                checkpoint["model"],
+                strict=False,
+            )
+            logging.info("Loaded actor from %s", network_path)
         log.info(
             f"Number of network parameters: {sum(p.numel() for p in self.parameters())}"
         )
+        self.horizon_steps = horizon_steps
 
-    def loss(self, true_action, obs_cond, **kwargs):
+    def loss(
+        self,
+        true_action,
+        cond,
+        **kwargs,
+    ):
         B = len(true_action)
-        cond = obs_cond[0].reshape(B, -1)
         dist, entropy, _ = self.forward_train(
             cond,
             deterministic=False,
@@ -72,7 +86,7 @@ class GMMModel(torch.nn.Module):
         return dist, approx_entropy, std
 
     def forward(self, cond, deterministic=False):
-        B = cond.shape[0]
+        B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
         T = self.horizon_steps
         dist, _, _ = self.forward_train(
             cond,

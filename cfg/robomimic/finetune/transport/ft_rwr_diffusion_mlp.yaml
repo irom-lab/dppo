@@ -89,6 +89,5 @@ model:
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  transition_dim: ${transition_dim}
   denoising_steps: ${denoising_steps}
   device: ${device}

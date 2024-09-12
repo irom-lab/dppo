@@ -3,6 +3,8 @@ Advantage-weighted regression (AWR) for diffusion policy.
 
 Advantage = discounted-reward-to-go - V(s)
 
+Do not support pixel input right now.
+
 """
 
 import os
@@ -131,6 +133,7 @@ class TrainAWRDiffusionAgent(TrainAgent):
         # Start training loop
         timer = Timer()
         run_results = []
+        last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
 
@@ -145,9 +148,10 @@ class TrainAWRDiffusionAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
             self.model.eval() if eval_mode else self.model.train()
-            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
+            last_itr_eval = eval_mode
 
-            # Reset env at the beginning of an iteration
+            # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
+            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
@@ -155,7 +159,6 @@ class TrainAWRDiffusionAgent(TrainAgent):
                 firsts_trajs[0] = (
                     done_venv  # if done at the end of last iteration, then the envs are just reset
                 )
-            last_itr_eval = eval_mode
             reward_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
@@ -165,16 +168,19 @@ class TrainAWRDiffusionAgent(TrainAgent):
 
                 # Select action
                 with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     samples = (
                         self.model(
-                            cond=torch.from_numpy(prev_obs_venv)
-                            .float()
-                            .to(self.device),
+                            cond=cond,
                             deterministic=eval_mode,
                         )
                         .cpu()
                         .numpy()
-                    )  # n_env x horizon x act
+                    )
                 action_venv = samples[:, : self.act_steps]
 
                 # Apply multi-step action
@@ -184,7 +190,7 @@ class TrainAWRDiffusionAgent(TrainAgent):
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
 
                 # add to buffer
-                obs_buffer.append(prev_obs_venv)
+                obs_buffer.append(prev_obs_venv["state"])
                 action_buffer.append(action_venv)
                 reward_buffer.append(reward_venv * self.scale_reward_factor)
                 done_buffer.append(done_venv)
@@ -230,59 +236,46 @@ class TrainAWRDiffusionAgent(TrainAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
-            # Update
+            # Update models
             if not eval_mode:
-
-                obs_trajs = np.array(deepcopy(obs_buffer))
+                obs_trajs = np.array(deepcopy(obs_buffer))  # assume only state
                 reward_trajs = np.array(deepcopy(reward_buffer))
                 dones_trajs = np.array(deepcopy(done_buffer))
-
                 obs_t = einops.rearrange(
                     torch.from_numpy(obs_trajs).float().to(self.device),
                     "s e h d -> (s e) h d",
                 )
-                values_t = np.array(self.model.critic(obs_t).detach().cpu().numpy())
-                values_trajs = values_t.reshape(-1, self.n_envs)
+                values_trajs = np.array(
+                    self.model.critic({"state": obs_t}).detach().cpu().numpy()
+                ).reshape(-1, self.n_envs)
                 td_trajs = td_values(obs_trajs, reward_trajs, dones_trajs, values_trajs)
+                td_t = torch.from_numpy(td_trajs.flatten()).float().to(self.device)
 
-                # flatten
-                obs_trajs = einops.rearrange(
-                    obs_trajs,
-                    "s e h d -> (s e) h d",
-                )
-                td_trajs = einops.rearrange(
-                    td_trajs,
-                    "s e -> (s e)",
-                )
-
-                # Update policy and critic
+                # Update critic
                 num_batch = int(
                     self.n_steps * self.n_envs / self.batch_size * self.replay_ratio
                 )
                 for _ in range(num_batch // self.critic_update_ratio):
-
-                    # Sample batch
                     inds = np.random.choice(len(obs_trajs), self.batch_size)
-                    obs_b = torch.from_numpy(obs_trajs[inds]).float().to(self.device)
-                    td_b = torch.from_numpy(td_trajs[inds]).float().to(self.device)
-
-                    # Update critic
-                    loss_critic = self.model.loss_critic(obs_b, td_b)
+                    loss_critic = self.model.loss_critic(
+                        {"state": obs_t[inds]}, td_t[inds]
+                    )
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
                     self.critic_optimizer.step()
 
+                # Update policy - use a new copy of data
                 obs_trajs = np.array(deepcopy(obs_buffer))
                 samples_trajs = np.array(deepcopy(action_buffer))
                 reward_trajs = np.array(deepcopy(reward_buffer))
                 dones_trajs = np.array(deepcopy(done_buffer))
-
                 obs_t = einops.rearrange(
                     torch.from_numpy(obs_trajs).float().to(self.device),
                     "s e h d -> (s e) h d",
                 )
-                values_t = np.array(self.model.critic(obs_t).detach().cpu().numpy())
-                values_trajs = values_t.reshape(-1, self.n_envs)
+                values_trajs = np.array(
+                    self.model.critic({"state": obs_t}).detach().cpu().numpy()
+                ).reshape(-1, self.n_envs)
                 td_trajs = td_values(obs_trajs, reward_trajs, dones_trajs, values_trajs)
                 advantages_trajs = td_trajs - values_trajs
 
@@ -304,7 +297,11 @@ class TrainAWRDiffusionAgent(TrainAgent):
 
                     # Sample batch
                     inds = np.random.choice(len(obs_trajs), self.batch_size)
-                    obs_b = torch.from_numpy(obs_trajs[inds]).float().to(self.device)
+                    obs_b = {
+                        "state": torch.from_numpy(obs_trajs[inds])
+                        .float()
+                        .to(self.device)
+                    }
                     actions_b = (
                         torch.from_numpy(samples_trajs[inds]).float().to(self.device)
                     )
@@ -347,6 +344,7 @@ class TrainAWRDiffusionAgent(TrainAgent):
                 }
             )
             if self.itr % self.log_freq == 0:
+                time = timer()
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -367,7 +365,7 @@ class TrainAWRDiffusionAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{timer():8.4f}"
+                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
@@ -383,7 +381,7 @@ class TrainAWRDiffusionAgent(TrainAgent):
                     run_results[-1]["loss"] = loss
                     run_results[-1]["loss_critic"] = loss_critic
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = timer()
+                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

@@ -3,6 +3,7 @@ Critic networks.
 
 """
 
+from typing import Union
 import torch
 import copy
 import einops
@@ -17,7 +18,7 @@ class CriticObs(torch.nn.Module):
 
     def __init__(
         self,
-        obs_dim,
+        cond_dim,
         mlp_dims,
         activation_type="Mish",
         use_layernorm=False,
@@ -25,7 +26,7 @@ class CriticObs(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
-        mlp_dims = [obs_dim] + mlp_dims + [1]
+        mlp_dims = [cond_dim] + mlp_dims + [1]
         if residual_style:
             self.Q1 = ResidualMLP(
                 mlp_dims,
@@ -42,9 +43,20 @@ class CriticObs(torch.nn.Module):
                 verbose=False,
             )
 
-    def forward(self, x):
-        x = x.view(x.size(0), -1)
-        q1 = self.Q1(x)
+    def forward(self, cond: Union[dict, torch.Tensor]):
+        """
+        cond: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+            or (B, num_feature) from ViT encoder
+        """
+        if isinstance(cond, dict):
+            B = len(cond["state"])
+
+            # flatten history
+            state = cond["state"].view(B, -1)
+        else:
+            state = cond
+        q1 = self.Q1(state)
         return q1
 
 
@@ -53,7 +65,7 @@ class CriticObsAct(torch.nn.Module):
 
     def __init__(
         self,
-        obs_dim,
+        cond_dim,
         mlp_dims,
         action_dim,
         action_steps=1,
@@ -63,7 +75,7 @@ class CriticObsAct(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
-        mlp_dims = [obs_dim + action_dim * action_steps] + mlp_dims + [1]
+        mlp_dims = [cond_dim + action_dim * action_steps] + mlp_dims + [1]
         if residual_tyle:
             self.Q1 = ResidualMLP(
                 mlp_dims,
@@ -81,9 +93,21 @@ class CriticObsAct(torch.nn.Module):
             )
         self.Q2 = copy.deepcopy(self.Q1)
 
-    def forward(self, x, action):
-        x = x.view(x.size(0), -1)
-        x = torch.cat((x, action), dim=-1)
+    def forward(self, cond: dict, action):
+        """
+        cond: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+        action: (B, Ta, Da)
+        """
+        B = len(cond["state"])
+
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # flatten action
+        action = action.view(B, -1)
+
+        x = torch.cat((state, action), dim=-1)
         q1 = self.Q1(x)
         q2 = self.Q2(x)
         return q1.squeeze(1), q2.squeeze(1)
@@ -95,7 +119,8 @@ class ViTCritic(CriticObs):
     def __init__(
         self,
         backbone,
-        obs_dim,
+        cond_dim,
+        img_cond_steps=1,
         spatial_emb=128,
         patch_repr_dim=128,
         dropout=0,
@@ -104,14 +129,16 @@ class ViTCritic(CriticObs):
         **kwargs,
     ):
         # update input dim to mlp
-        mlp_obs_dim = spatial_emb * num_img + obs_dim
-        super().__init__(obs_dim=mlp_obs_dim, **kwargs)
+        mlp_obs_dim = spatial_emb * num_img + cond_dim
+        super().__init__(cond_dim=mlp_obs_dim, **kwargs)
         self.backbone = backbone
+        self.num_img = num_img
+        self.img_cond_steps = img_cond_steps
         if num_img > 1:
             self.compress1 = SpatialEmb(
                 num_patch=121,  # TODO: repr_dim // patch_repr_dim,
                 patch_dim=patch_repr_dim,
-                prop_dim=obs_dim,
+                prop_dim=cond_dim,
                 proj_dim=spatial_emb,
                 dropout=dropout,
             )
@@ -120,7 +147,7 @@ class ViTCritic(CriticObs):
             self.compress = SpatialEmb(
                 num_patch=121,
                 patch_dim=patch_repr_dim,
-                prop_dim=obs_dim,
+                prop_dim=cond_dim,
                 proj_dim=spatial_emb,
                 dropout=dropout,
             )
@@ -130,23 +157,39 @@ class ViTCritic(CriticObs):
 
     def forward(
         self,
-        obs: dict,
+        cond: dict,
         no_augment=False,
     ):
-        # flatten cond_dim if exists
-        if obs["rgb"].ndim == 5:
-            rgb = einops.rearrange(obs["rgb"], "b d c h w -> (b d) c h w")
+        """
+        cond: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+            rgb: (B, To, C, H, W)
+        no_augment: whether to skip augmentation
+
+        TODO long term: more flexible handling of cond
+        """
+        B, T_rgb, C, H, W = cond["rgb"].shape
+
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # Take recent images --- sometimes we want to use fewer img_cond_steps than cond_steps (e.g., 1 image but 3 prio)
+        rgb = cond["rgb"][:, -self.img_cond_steps :]
+
+        # concatenate images in cond by channels
+        if self.num_img > 1:
+            rgb = rgb.reshape(B, T_rgb, self.num_img, 3, H, W)
+            rgb = einops.rearrange(rgb, "b t n c h w -> b n (t c) h w")
         else:
-            rgb = obs["rgb"]
-        if obs["state"].ndim == 3:
-            state = einops.rearrange(obs["state"], "b d c -> (b d) c")
-        else:
-            state = obs["state"]
+            rgb = einops.rearrange(rgb, "b t c h w -> b (t c) h w")
+
+        # convert rgb to float32 for augmentation
+        rgb = rgb.float()
 
         # get vit output - pass in two images separately
-        if rgb.shape[1] == 6:  # TODO: properly handle multiple images
-            rgb1 = rgb[:, :3]
-            rgb2 = rgb[:, 3:]
+        if self.num_img > 1:  # TODO: properly handle multiple images
+            rgb1 = rgb[:, 0]
+            rgb2 = rgb[:, 1]
             if self.augment and not no_augment:
                 rgb1 = self.aug(rgb1)
                 rgb2 = self.aug(rgb2)

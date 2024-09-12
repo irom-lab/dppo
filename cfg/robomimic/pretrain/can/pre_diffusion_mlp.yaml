@@ -46,15 +46,13 @@ model:
     time_dim: 16
     mlp_dims: [512, 512, 512]
     residual_style: True
-    cond_dim: ${obs_dim}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  transition_dim: ${transition_dim}
   denoising_steps: ${denoising_steps}
-  cond_steps: ${cond_steps}
   device: ${device}
 
 ema:

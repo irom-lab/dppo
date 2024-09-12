@@ -21,6 +21,7 @@ class Gaussian_VisionMLP(nn.Module):
         transition_dim,
         horizon_steps,
         cond_dim,
+        img_cond_steps=1,
         mlp_dims=[256, 256, 256],
         activation_type="Mish",
         residual_style=False,
@@ -44,6 +45,8 @@ class Gaussian_VisionMLP(nn.Module):
         if augment:
             self.aug = RandomShiftsAug(pad=4)
         self.augment = augment
+        self.num_img = num_img
+        self.img_cond_steps = img_cond_steps
         if spatial_emb > 0:
             assert spatial_emb > 1, "this is the dimension"
             if num_img > 1:
@@ -109,24 +112,31 @@ class Gaussian_VisionMLP(nn.Module):
         self.fixed_std = fixed_std
         self.learn_fixed_std = learn_fixed_std
 
-    def forward(self, x):
-        B = len(x["state"])
-        device = x["state"].device
+    def forward(self, cond):
+        B = len(cond["rgb"])
+        device = cond["rgb"].device
+        _, T_rgb, C, H, W = cond["rgb"].shape
 
-        # flatten cond_dim if exists
-        if x["rgb"].ndim == 5:
-            rgb = einops.rearrange(x["rgb"], "b d c h w -> (b d) c h w")
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # Take recent images --- sometimes we want to use fewer img_cond_steps than cond_steps (e.g., 1 image but 3 prio)
+        rgb = cond["rgb"][:, -self.img_cond_steps :]
+
+        # concatenate images in cond by channels
+        if self.num_img > 1:
+            rgb = rgb.reshape(B, T_rgb, self.num_img, 3, H, W)
+            rgb = einops.rearrange(rgb, "b t n c h w -> b n (t c) h w")
         else:
-            rgb = x["rgb"]
-        if x["state"].ndim == 3:
-            state = einops.rearrange(x["state"], "b d c -> (b d) c")
-        else:
-            state = x["state"]
+            rgb = einops.rearrange(rgb, "b t c h w -> b (t c) h w")
+
+        # convert rgb to float32 for augmentation
+        rgb = rgb.float()
 
         # get vit output - pass in two images separately
-        if rgb.shape[1] == 6:  # TODO: properly handle multiple images
-            rgb1 = rgb[:, :3]
-            rgb2 = rgb[:, 3:]
+        if self.num_img > 1:  # TODO: properly handle multiple images
+            rgb1 = rgb[:, 0]
+            rgb2 = rgb[:, 1]
             if self.augment:
                 rgb1 = self.aug(rgb1)
                 rgb2 = self.aug(rgb2)
@@ -223,11 +233,15 @@ class Gaussian_MLP(nn.Module):
         self.fixed_std = fixed_std
         self.learn_fixed_std = learn_fixed_std
 
-    def forward(self, x):
-        B = len(x)
+    def forward(self, cond):
+        B = len(cond["state"])
+        device = cond["state"].device
+
+        # flatten history
+        state = cond["state"].view(B, -1)
 
         # mlp
-        out_mean = self.mlp_mean(x)
+        out_mean = self.mlp_mean(state)
         out_mean = torch.tanh(out_mean).view(
             B, self.horizon_steps * self.transition_dim
         )  # tanh squashing in [-1, 1]
@@ -238,9 +252,9 @@ class Gaussian_MLP(nn.Module):
             out_scale = out_scale.view(1, self.transition_dim)
             out_scale = out_scale.repeat(B, self.horizon_steps)
         elif self.use_fixed_std:
-            out_scale = torch.ones_like(out_mean).to(x.device) * self.fixed_std
+            out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
-            out_logvar = self.mlp_logvar(x).view(
+            out_logvar = self.mlp_logvar(state).view(
                 B, self.horizon_steps * self.transition_dim
             )
             out_logvar = torch.clamp(out_logvar, self.logvar_min, self.logvar_max)

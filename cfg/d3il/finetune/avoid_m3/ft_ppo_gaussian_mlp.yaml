@@ -99,7 +99,6 @@ model:
     _target_: model.common.critic.CriticObs
     mlp_dims: [256, 256, 256]
     residual_style: True
-    obs_dim: ${obs_dim}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
   horizon_steps: ${horizon_steps}
-  cond_steps: ${cond_steps}
   device: ${device}

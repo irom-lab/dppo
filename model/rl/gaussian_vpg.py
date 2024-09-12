@@ -15,26 +15,14 @@ class VPG_Gaussian(GaussianModel):
         self,
         actor,
         critic,
-        cond_steps=1,
         randn_clip_value=10,
-        network_path=None,
         **kwargs,
     ):
         super().__init__(network=actor, **kwargs)
-        self.cond_steps = cond_steps
         self.randn_clip_value = randn_clip_value
 
         # Value function for obs - simple MLP
         self.critic = critic.to(self.device)
-        if network_path is not None:
-            checkpoint = torch.load(
-                network_path, map_location=self.device, weights_only=True
-            )
-            self.load_state_dict(
-                checkpoint["model"],
-                strict=False,
-            )
-            logging.info("Loaded actor from %s", network_path)
 
         # Re-name network to actor
         self.actor_ft = actor
@@ -44,15 +32,31 @@ class VPG_Gaussian(GaussianModel):
         for param in self.actor.parameters():
             param.requires_grad = False
 
+    # ---------- Sampling ----------#
+
+    @torch.no_grad()
+    def forward(
+        self,
+        cond,
+        deterministic=False,
+        use_base_policy=False,
+    ):
+        return super().forward(
+            cond=cond,
+            deterministic=deterministic,
+            randn_clip_value=self.randn_clip_value,
+            network_override=self.actor if use_base_policy else None,
+        )
+
+    # ---------- RL training ----------#
+
     def get_logprobs(
         self,
         cond,
         actions,
         use_base_policy=False,
     ):
-        B, T, D = actions.shape
-        if not isinstance(cond, dict):
-            cond = cond.view(B, -1)
+        B = len(actions)
         dist = self.forward_train(
             cond,
             deterministic=False,
@@ -66,22 +70,3 @@ class VPG_Gaussian(GaussianModel):
 
     def loss(self, obs, actions, reward):
         raise NotImplementedError
-
-    @torch.no_grad()
-    def forward(
-        self,
-        cond,
-        deterministic=False,
-        use_base_policy=False,
-    ):
-        if isinstance(cond, dict):
-            B = cond["state"].shape[0]
-        else:
-            B = cond.shape[0]
-            cond = cond.view(B, -1)
-        return super().forward(
-            cond=cond,
-            deterministic=deterministic,
-            randn_clip_value=self.randn_clip_value,
-            network_override=self.actor if use_base_policy else None,
-        )

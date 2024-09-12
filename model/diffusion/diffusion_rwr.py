@@ -43,18 +43,11 @@ class RWRDiffusion(DiffusionModel):
     def p_losses(
         self,
         x_start,
-        obs_cond,
+        cond,
         rewards,
         t,
     ):
         device = x_start.device
-        B, T, D = x_start.shape
-
-        # handle different ways of passing observation
-        if isinstance(obs_cond[0], dict):
-            cond = obs_cond[0]
-        else:
-            cond = obs_cond.reshape(B, -1)
 
         # Forward process
         noise = torch.randn_like(x_start, device=device)
@@ -79,7 +72,7 @@ class RWRDiffusion(DiffusionModel):
         self,
         x,
         t,
-        cond=None,
+        cond,
     ):
         noise = self.network(x, t, cond=cond)
 
@@ -116,15 +109,10 @@ class RWRDiffusion(DiffusionModel):
         deterministic=False,
     ):
         device = self.betas.device
-        B = cond.shape[0]
-        if isinstance(cond, dict):
-            raise NotImplementedError("Not implemented for images")
-        else:
-            B = cond.shape[0]
-            cond = cond[:, : self.cond_steps]
+        B = len(cond["state"])
 
         # Loop
-        x = torch.randn((B, self.horizon_steps, self.transition_dim), device=device)
+        x = torch.randn((B, self.horizon_steps, self.action_dim), device=device)
         t_all = list(reversed(range(self.denoising_steps)))
         for i, t in enumerate(t_all):
             t_b = make_timesteps(B, t, device)

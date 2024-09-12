@@ -30,7 +30,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
 
         # Set obs dim -  we will save the different obs in batch in a dict
         shape_meta = cfg.shape_meta
-        self.obs_dims = {k: shape_meta.obs[k]["shape"] for k in shape_meta.obs.keys()}
+        self.obs_dims = {k: shape_meta.obs[k]["shape"] for k in shape_meta.obs}
 
         # Gradient accumulation to deal with large GPU RAM usage
         self.grad_accumulate = cfg.train.grad_accumulate
@@ -95,7 +95,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                         key: torch.from_numpy(prev_obs_venv[key])
                         .float()
                         .to(self.device)
-                        for key in self.obs_dims.keys()
+                        for key in self.obs_dims
                     }  # batch each type of obs and put into dict
                     samples = self.model(
                         cond=cond,
@@ -114,7 +114,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
-                for k in obs_trajs.keys():
+                for k in obs_trajs:
                     obs_trajs[k] = np.vstack((obs_trajs[k], prev_obs_venv[k][None]))
                 chains_trajs = np.vstack((chains_trajs, chains_venv[None]))
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
@@ -159,7 +159,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
-            # Update
+            # Update models
             if not eval_mode:
                 with torch.no_grad():
                     # apply image randomization
@@ -187,7 +187,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                         self.n_envs * self.n_steps / self.logprob_batch_size
                     )
                     obs_ts = [{} for _ in range(num_split)]
-                    for k in obs_trajs.keys():
+                    for k in obs_trajs:
                         obs_k = einops.rearrange(
                             obs_trajs[k],
                             "s e ... -> (s e) ...",
@@ -238,7 +238,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                     # bootstrap value with GAE if not done - apply reward scaling with constant if specified
                     obs_venv_ts = {
                         key: torch.from_numpy(obs_venv[key]).float().to(self.device)
-                        for key in self.obs_dims.keys()
+                        for key in self.obs_dims
                     }
                     with torch.no_grad():
                         next_value = (
@@ -278,7 +278,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                         obs_trajs[k],
                         "s e ... -> (s e) ...",
                     )
-                    for k in obs_trajs.keys()
+                    for k in obs_trajs
                 }
                 chains_k = einops.rearrange(
                     torch.tensor(chains_trajs).float().to(self.device),
@@ -309,7 +309,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                         start = batch * self.batch_size
                         end = start + self.batch_size
                         inds_b = inds_k[start:end]  # b for batch
-                        obs_b = {k: obs_k[k][inds_b] for k in obs_k.keys()}
+                        obs_b = {k: obs_k[k][inds_b] for k in obs_k}
                         chains_b = chains_k[inds_b]
                         returns_b = returns_k[inds_b]
                         values_b = values_k[inds_b]
@@ -387,7 +387,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                     np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
                 )
 
-            # Update lr
+            # Update lr, min_sampling_std
             if self.itr >= self.n_critic_warmup_itr:
                 self.actor_lr_scheduler.step()
                 if self.learn_eta:
@@ -407,6 +407,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                 }
             )
             if self.itr % self.log_freq == 0:
+                time = timer()
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -427,7 +428,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | bc loss {bc_loss:8.4f} | reward {avg_episode_reward:8.4f} | eta {eta:8.4f} | t:{timer():8.4f}"
+                        f"{self.itr}: loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | bc loss {bc_loss:8.4f} | reward {avg_episode_reward:8.4f} | eta {eta:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
@@ -462,7 +463,7 @@ class TrainPPOImgDiffusionAgent(TrainPPODiffusionAgent):
                     run_results[-1]["clip_frac"] = np.mean(clipfracs)
                     run_results[-1]["explained_variance"] = explained_var
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = timer()
+                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

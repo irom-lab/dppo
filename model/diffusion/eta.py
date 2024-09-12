@@ -28,14 +28,11 @@ class EtaFixed(torch.nn.Module):
             torch.tensor([2 * (base_eta - min_eta) / (max_eta - min_eta) - 1])
         )
 
-    def __call__(self, x):
+    def __call__(self, cond):
         """Match input batch size, but do not depend on input"""
-        if isinstance(x, dict):
-            B = x["state"].shape[0]
-            device = x["state"].device
-        else:
-            B = x.size(0)
-            device = x.device
+        sample_data = cond["state"] if "state" in cond else cond["rgb"]
+        B = len(sample_data)
+        device = sample_data.device
         eta_normalized = torch.tanh(self.eta_logit)
 
         # map to min and max from [-1, 1]
@@ -64,14 +61,11 @@ class EtaAction(torch.nn.Module):
         self.min = min_eta
         self.max = max_eta
 
-    def __call__(self, x):
+    def __call__(self, cond):
         """Match input batch size, but do not depend on input"""
-        if isinstance(x, dict):
-            B = x["state"].shape[0]
-            device = x["state"].device
-        else:
-            B = x.size(0)
-            device = x.device
+        sample_data = cond["state"] if "state" in cond else cond["rgb"]
+        B = len(sample_data)
+        device = sample_data.device
         eta_normalized = torch.tanh(self.eta_logit)
 
         # map to min and max from [-1, 1]
@@ -109,13 +103,17 @@ class EtaState(torch.nn.Module):
                 torch.nn.init.xavier_normal_(m.weight, gain=gain)
                 m.bias.data.fill_(0)
 
-    def __call__(self, x):
-        if isinstance(x, dict):
+    def __call__(self, cond):
+        if "rgb" in cond:
             raise NotImplementedError(
                 "State-based eta not implemented for image-based training!"
             )
-        x = x.view(x.size(0), -1)
-        eta_res = self.mlp_res(x)
+        # flatten history
+        B = len(cond["state"])
+        state = cond["state"].view(B, -1)
+
+        # forward pass
+        eta_res = self.mlp_res(state)
         eta_res = torch.tanh(eta_res)  # [-1, 1]
         eta = eta_res + self.base  # [0, 2]
         return torch.clamp(eta, self.min_res + self.base, self.max_res + self.base)
@@ -152,13 +150,17 @@ class EtaStateAction(torch.nn.Module):
                 torch.nn.init.xavier_normal_(m.weight, gain=gain)
                 m.bias.data.fill_(0)
 
-    def __call__(self, x):
-        if isinstance(x, dict):
+    def __call__(self, cond):
+        if "rgb" in cond:
             raise NotImplementedError(
                 "State-action-based eta not implemented for image-based training!"
             )
-        x = x.view(x.size(0), -1)
-        eta_res = self.mlp_res(x)
+        # flatten history
+        B = len(cond["state"])
+        state = cond["state"].view(B, -1)
+
+        # forward pass
+        eta_res = self.mlp_res(state)
         eta_res = torch.tanh(eta_res)  # [-1, 1]
         eta = eta_res + self.base
         return torch.clamp(eta, self.min_res + self.base, self.max_res + self.base)

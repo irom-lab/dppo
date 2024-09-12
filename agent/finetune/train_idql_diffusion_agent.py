@@ -1,6 +1,8 @@
 """
 Implicit diffusion Q-learning (IDQL) trainer for diffusion policy.
 
+Do not support pixel input right now.
+
 """
 
 import os
@@ -11,7 +13,6 @@ import torch
 import logging
 import wandb
 from copy import deepcopy
-import random
 
 log = logging.getLogger(__name__)
 from util.timer import Timer
@@ -98,8 +99,8 @@ class TrainIDQLDiffusionAgent(TrainAgent):
 
         # make a FIFO replay buffer for obs, action, and reward
         obs_buffer = deque(maxlen=self.buffer_size)
-        action_buffer = deque(maxlen=self.buffer_size)
         next_obs_buffer = deque(maxlen=self.buffer_size)
+        action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
         done_buffer = deque(maxlen=self.buffer_size)
         first_buffer = deque(maxlen=self.buffer_size)
@@ -107,6 +108,7 @@ class TrainIDQLDiffusionAgent(TrainAgent):
         # Start training loop
         timer = Timer()
         run_results = []
+        last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
 
@@ -121,9 +123,10 @@ class TrainIDQLDiffusionAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
             self.model.eval() if eval_mode else self.model.train()
-            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
+            last_itr_eval = eval_mode
 
-            # Reset env at the beginning of an iteration
+            # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
+            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
@@ -131,7 +134,6 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                 firsts_trajs[0] = (
                     done_venv  # if done at the end of last iteration, then the envs are just reset
                 )
-            last_itr_eval = eval_mode
             reward_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
@@ -141,11 +143,14 @@ class TrainIDQLDiffusionAgent(TrainAgent):
 
                 # Select action
                 with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     samples = (
                         self.model(
-                            cond=torch.from_numpy(prev_obs_venv)
-                            .float()
-                            .to(self.device),
+                            cond=cond,
                             deterministic=eval_mode and self.eval_deterministic,
                             num_sample=self.num_sample,
                             use_expectile_exploration=self.use_expectile_exploration,
@@ -162,9 +167,9 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
 
                 # add to buffer
-                obs_buffer.append(prev_obs_venv)
+                obs_buffer.append(prev_obs_venv["state"])
+                next_obs_buffer.append(obs_venv["state"])
                 action_buffer.append(action_venv)
-                next_obs_buffer.append(obs_venv)
                 reward_buffer.append(reward_venv * self.scale_reward_factor)
                 done_buffer.append(done_venv)
                 first_buffer.append(firsts_trajs[step])
@@ -209,7 +214,7 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
-            # Update
+            # Update models
             if not eval_mode:
 
                 obs_trajs = np.array(deepcopy(obs_buffer))
@@ -257,14 +262,21 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                     done_b = torch.from_numpy(done_trajs[inds]).float().to(self.device)
 
                     # update critic value function
-                    critic_loss_v = self.model.loss_critic_v(obs_b, actions_b)
+                    critic_loss_v = self.model.loss_critic_v(
+                        {"state": obs_b}, actions_b
+                    )
                     self.critic_v_optimizer.zero_grad()
                     critic_loss_v.backward()
                     self.critic_v_optimizer.step()
 
                     # update critic q function
                     critic_loss_q = self.model.loss_critic_q(
-                        obs_b, next_obs_b, actions_b, reward_b, done_b, self.gamma
+                        {"state": obs_b},
+                        {"state": next_obs_b},
+                        actions_b,
+                        reward_b,
+                        done_b,
+                        self.gamma,
                     )
                     self.critic_q_optimizer.zero_grad()
                     critic_loss_q.backward()
@@ -278,7 +290,7 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                     # Update policy with collected trajectories - no weighting
                     loss = self.model.loss(
                         actions_b,
-                        obs_b,
+                        {"state": obs_b},
                     )
                     self.actor_optimizer.zero_grad()
                     loss.backward()
@@ -305,6 +317,7 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                 }
             )
             if self.itr % self.log_freq == 0:
+                time = timer()
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -325,7 +338,7 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{timer():8.4f}"
+                        f"{self.itr}: loss {loss:8.4f} | reward {avg_episode_reward:8.4f} |t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
@@ -341,7 +354,7 @@ class TrainIDQLDiffusionAgent(TrainAgent):
                     run_results[-1]["loss"] = loss
                     run_results[-1]["loss_critic"] = loss_critic
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = timer()
+                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

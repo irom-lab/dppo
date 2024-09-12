@@ -77,11 +77,15 @@ class GMM_MLP(nn.Module):
             use_layernorm=use_layernorm,
         )
 
-    def forward(self, x):
-        B = len(x)
+    def forward(self, cond):
+        B = len(cond["state"])
+        device = cond["state"].device
+
+        # flatten history
+        state = cond["state"].view(B, -1)
 
         # mlp
-        out_mean = self.mlp_mean(x)
+        out_mean = self.mlp_mean(state)
         out_mean = torch.tanh(out_mean).view(
             B, self.num_modes, self.horizon_steps * self.transition_dim
         )  # tanh squashing in [-1, 1]
@@ -92,15 +96,15 @@ class GMM_MLP(nn.Module):
             out_scale = out_scale.view(1, self.num_modes, self.transition_dim)
             out_scale = out_scale.repeat(B, 1, self.horizon_steps)
         elif self.use_fixed_std:
-            out_scale = torch.ones_like(out_mean).to(x.device) * self.fixed_std
+            out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
-            out_logvar = self.mlp_logvar(x).view(
+            out_logvar = self.mlp_logvar(state).view(
                 B, self.num_modes, self.horizon_steps * self.transition_dim
             )
             out_logvar = torch.clamp(out_logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)
 
-        out_weights = self.mlp_weights(x)
+        out_weights = self.mlp_weights(state)
         out_weights = out_weights.view(B, self.num_modes)
 
         return out_mean, out_scale, out_weights

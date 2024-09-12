@@ -3,6 +3,7 @@ Multi-step wrapper. Allow executing multiple environmnt steps. Returns stacked o
 
 Modified from https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/gym_util/multistep_wrapper.py
 
+TODO: allow cond_steps != img_cond_steps (should be implemented in training scripts, not here)
 """
 
 import gym
@@ -10,8 +11,6 @@ from typing import Optional
 from gym import spaces
 import numpy as np
 from collections import defaultdict, deque
-
-# import dill
 
 
 def stack_repeated(x, n):
@@ -157,12 +156,11 @@ class MultiStep(gym.Wrapper):
                 done = True
             self.done.append(done)
             self._add_info(info)
-
         observation = self._get_obs(self.n_obs_steps)
         reward = aggregate(self.reward, self.reward_agg_method)
         done = aggregate(self.done, "max")
         info = dict_take_last_n(self.info, self.n_obs_steps)
-        if self.pass_full_observations:  # right now this assume n_obs_steps = 1
+        if self.pass_full_observations:
             info["full_obs"] = self._get_obs(act_step + 1)
 
         # In mujoco case, done can happen within the loop above
@@ -205,22 +203,6 @@ class MultiStep(gym.Wrapper):
     def render(self, **kwargs):
         """Not the best design"""
         return self.env.render(**kwargs)
-
-    # def get_rewards(self):
-    #     return self.reward
-
-    # def get_attr(self, name):
-    #     return getattr(self, name)
-
-    # def run_dill_function(self, dill_fn):
-    #     fn = dill.loads(dill_fn)
-    #     return fn(self)
-
-    # def get_infos(self):
-    #     result = dict()
-    #     for k, v in self.info.items():
-    #         result[k] = list(v)
-    #     return result
 
 
 if __name__ == "__main__":

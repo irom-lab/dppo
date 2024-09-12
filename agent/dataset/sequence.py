@@ -16,19 +16,21 @@ import random
 
 log = logging.getLogger(__name__)
 
-Batch = namedtuple("Batch", "trajectories conditions")
+Batch = namedtuple("Batch", "actions conditions")
 
 
 class StitchedSequenceDataset(torch.utils.data.Dataset):
     """
-    Dataset to efficiently load and sample trajectories. Stitches episodes together in the time dimension to avoid excessive zero padding. Episode ID's are used to index unique trajectories.
+    Load stitched trajectories of states/actions/images, and 1-D array of traj_lengths, from npz or pkl file.
 
-    Returns a dictionary with values of shape: [sum_e(T_e), *D] where T_e is traj length of episode e and D is
-    (tuple of) dimension of observation, action, images, etc.
+    Use the first max_n_episodes episodes (instead of random sampling)
 
     Example:
         states: [----------traj 1----------][---------traj 2----------] ... [---------traj N----------]
-        Episode IDs:  [----------   1  ----------][----------   2  ---------] ... [----------   N  ---------]
+        Episode IDs (determined based on traj_lengths):  [----------   1  ----------][----------   2  ---------] ... [----------   N  ---------]
+
+    Each sample is a namedtuple of (1) chunked actions and (2) a list (obs timesteps) of dictionary with keys states and images.
+
     """
 
     def __init__(
@@ -36,23 +38,30 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         dataset_path,
         horizon_steps=64,
         cond_steps=1,
+        img_cond_steps=1,
         max_n_episodes=10000,
         use_img=False,
         device="cuda:0",
     ):
+        assert (
+            img_cond_steps <= cond_steps
+        ), "consider using more cond_steps than img_cond_steps"
         self.horizon_steps = horizon_steps
-        self.cond_steps = cond_steps
+        self.cond_steps = cond_steps  # states (proprio, etc.)
+        self.img_cond_steps = img_cond_steps
         self.device = device
         self.use_img = use_img
 
         # Load dataset to device specified
         if dataset_path.endswith(".npz"):
             dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
-        else:
+        elif dataset_path.endswith(".pkl"):
             with open(dataset_path, "rb") as f:
                 dataset = pickle.load(f)
-        traj_lengths = dataset["traj_lengths"]  # 1-D array
-        total_num_steps = np.sum(traj_lengths[:max_n_episodes])
+        else:
+            raise ValueError(f"Unsupported file format: {dataset_path}")
+        traj_lengths = dataset["traj_lengths"][:max_n_episodes]  # 1-D array
+        total_num_steps = np.sum(traj_lengths)
 
         # Set up indices for sampling
         self.indices = self.make_indices(traj_lengths, horizon_steps)
@@ -75,35 +84,51 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
             log.info(f"Images shape/type: {self.images.shape, self.images.dtype}")
 
     def __getitem__(self, idx):
-        start = self.indices[idx]
+        """
+        repeat states/images if using history observation at the beginning of the episode
+        """
+        start, num_before_start = self.indices[idx]
         end = start + self.horizon_steps
-        states = self.states[start:end]
+        states = self.states[(start - num_before_start) : end]
         actions = self.actions[start:end]
+        states = torch.stack(
+            [
+                states[min(num_before_start - t, 0)]
+                for t in reversed(range(self.cond_steps))
+            ]
+        )  # more recent is at the end
+        conditions = {"state": states}
         if self.use_img:
-            images = self.images[start:end]
-            conditions = {
-                1 - self.cond_steps: {"state": states[0], "rgb": images[0]}
-            }  # TODO: allow obs history, -1, -2, ...
-        else:
-            conditions = {1 - self.cond_steps: states[0]}
+            images = self.images[(start - num_before_start) : end]
+            images = torch.stack(
+                [
+                    images[min(num_before_start - t, 0)]
+                    for t in reversed(range(self.img_cond_steps))
+                ]
+            )
+            conditions["rgb"] = images
         batch = Batch(actions, conditions)
         return batch
 
     def make_indices(self, traj_lengths, horizon_steps):
         """
         makes indices for sampling from dataset;
-        each index maps to a datapoint
+        each index maps to a datapoint, also save the number of steps before it within the same trajectory
         """
         indices = []
         cur_traj_index = 0
         for traj_length in traj_lengths:
             max_start = cur_traj_index + traj_length - horizon_steps + 1
-            indices += list(range(cur_traj_index, max_start))
+            indices += [
+                (i, i - cur_traj_index) for i in range(cur_traj_index, max_start)
+            ]
             cur_traj_index += traj_length
         return indices
 
     def set_train_val_split(self, train_split):
-        """Not doing validation right now"""
+        """
+        Not doing validation right now
+        """
         num_train = int(len(self.indices) * train_split)
         train_indices = random.sample(self.indices, num_train)
         val_indices = [i for i in range(len(self.indices)) if i not in train_indices]

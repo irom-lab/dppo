@@ -1,6 +1,14 @@
 """
 PPO for Gaussian policy.
 
+To: observation sequence length
+Ta: action chunk size
+Do: observation dimension
+Da: action dimension
+
+C: image channels
+H, W: image height and width
+
 """
 
 from typing import Optional
@@ -41,8 +49,10 @@ class PPO_Gaussian(VPG_Gaussian):
         """
         PPO loss
 
-        obs: (B, obs_step, obs_dim)
-        actions: (B, horizon_step, action_dim)
+        obs: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+            rgb: (B, To, C, H, W)
+        actions: (B, Ta, Da)
         returns: (B, )
         values: (B, )
         advantages: (B,)

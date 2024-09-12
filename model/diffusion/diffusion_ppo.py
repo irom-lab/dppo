@@ -1,6 +1,15 @@
 """
 DPPO: Diffusion Policy Policy Optimization. 
 
+K: number of denoising steps
+To: observation sequence length
+Ta: action chunk size
+Do: observation dimension
+Da: action dimension
+
+C: image channels
+H, W: image height and width
+
 """
 
 from typing import Optional
@@ -60,13 +69,15 @@ class PPODiffusion(VPGDiffusion):
         """
         PPO loss
 
-        obs: (B, obs_step, obs_dim)
-        chains: (B, num_denoising_step+1, horizon_step, action_dim)
+        obs: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+            rgb: (B, To, C, H, W)
+        chains: (B, K+1, Ta, Da)
         returns: (B, )
         values: (B, )
         advantages: (B,)
-        oldlogprobs: (B, num_denoising_step, horizon_step, action_dim)
-        use_bc_loss: add BC regularization loss
+        oldlogprobs: (B, K, Ta, Da)
+        use_bc_loss: whether to add BC regularization loss
         reward_horizon: action horizon that backpropagates gradient
         """
         # Get new logprobs for denoising steps from T-1 to 0 - entropy is fixed fod diffusion

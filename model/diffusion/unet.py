@@ -270,15 +270,22 @@ class Unet1D(nn.Module):
         **kwargs,
     ):
         """
-        x: (B,T,input_dim)
+        x: (B, Ta, act_dim)
         time: (B,) or int, diffusion step
-        cond: (B,obs_step,cond_dim)
-        output: (B,T,input_dim)
+        cond: dict with key state/rgb; more recent obs at the end
+            state: (B, To, obs_dim)
         """
+        B = len(x)
+
+        # move chunk dim to the end
         x = einops.rearrange(x, "b h t -> b t h")
-        cond = cond.view(cond.shape[0], -1)
+
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # obs encoder
         if hasattr(self, "cond_mlp"):
-            cond = self.cond_mlp(cond)
+            state = self.cond_mlp(state)
 
         # 1. time
         if not torch.is_tensor(time):
@@ -288,7 +295,7 @@ class Unet1D(nn.Module):
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         time = time.expand(x.shape[0])
         global_feature = self.time_mlp(time)
-        global_feature = torch.cat([global_feature, cond], axis=-1)
+        global_feature = torch.cat([global_feature, state], axis=-1)
 
         # encode local features
         h_local = list()

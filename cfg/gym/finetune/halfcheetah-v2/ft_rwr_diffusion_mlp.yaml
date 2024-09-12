@@ -74,7 +74,7 @@ model:
     _target_: model.diffusion.mlp_diffusion.DiffusionMLP
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
-    cond_dim: ${obs_dim}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     time_dim: 16
     mlp_dims: [512, 512, 512]
     activation_type: ReLU
@@ -82,6 +82,5 @@ model:
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  transition_dim: ${transition_dim}
   denoising_steps: ${denoising_steps}
   device: ${device}

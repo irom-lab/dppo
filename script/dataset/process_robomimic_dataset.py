@@ -303,7 +303,7 @@ def make_dataset(
                 val_episode_reward_all.append(np.sum(data_traj["rewards"]))
 
     # Save to np file
-    save_train_path = os.path.join(save_dir, save_name_prefix + "train.pkl")
+    save_train_path = os.path.join(save_dir, save_name_prefix + "train.npz")
     save_val_path = os.path.join(save_dir, save_name_prefix + "val.pkl")
     with open(save_train_path, "wb") as f:
         pickle.dump(out_train, f)

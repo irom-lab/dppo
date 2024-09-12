@@ -70,13 +70,15 @@ class Gaussian_Transformer(nn.Module):
         )
 
     def forward(self, cond):
-        """
-        cond: (B,cond_dim)
-        output: (B,horizon*transition)
-        """
-        B = len(cond)
-        cond = cond.unsqueeze(1)  # (B,1,cond_dim)
-        out, _ = self.transformer(cond)  # (B,horizon,output_dim)
+        B = len(cond["state"])
+        device = cond["state"].device
+
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # input to transformer
+        state = state.unsqueeze(1)  # (B,1,cond_dim)
+        out, _ = self.transformer(state)  # (B,horizon,output_dim)
 
         # use the first half of the output as mean
         out_mean = torch.tanh(out[:, :, : self.transition_dim])
@@ -88,7 +90,7 @@ class Gaussian_Transformer(nn.Module):
             out_scale = out_scale.view(1, self.transition_dim)
             out_scale = out_scale.repeat(B, self.horizon_steps)
         elif self.fixed_std is not None:
-            out_scale = torch.ones_like(out_mean).to(cond.device) * self.fixed_std
+            out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
             out_logvar = out[:, :, self.transition_dim :]
             out_logvar = out_logvar.reshape(B, self.horizon_steps * self.transition_dim)
@@ -164,14 +166,16 @@ class GMM_Transformer(nn.Module):
         self.modes_head = nn.Linear(horizon_steps * transformer_embed_dim, num_modes)
 
     def forward(self, cond):
-        """
-        cond: (B,cond_dim)
-        output: (B,horizon*transition)
-        """
-        B = len(cond)
-        cond = cond.unsqueeze(1)  # (B,1,cond_dim)
+        B = len(cond["state"])
+        device = cond["state"].device
+
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # input to transformer
+        state = state.unsqueeze(1)  # (B,1,cond_dim)
         out, out_prehead = self.transformer(
-            cond
+            state
         )  # (B,horizon,output_dim), (B,horizon,emb_dim)
 
         # use the first half of the output as mean
@@ -190,7 +194,7 @@ class GMM_Transformer(nn.Module):
             out_scale = out_scale.view(1, self.num_modes, self.transition_dim)
             out_scale = out_scale.repeat(B, 1, self.horizon_steps)
         elif self.fixed_std is not None:
-            out_scale = torch.ones_like(out_mean).to(cond.device) * self.fixed_std
+            out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
             out_logvar = out[
                 :, :, self.num_modes * self.transition_dim : -self.num_modes

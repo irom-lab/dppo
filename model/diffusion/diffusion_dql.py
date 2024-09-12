@@ -41,19 +41,19 @@ class DQLDiffusion(DiffusionModel):
         # Whether to clamp sampled action between [-1, 1]
         self.clamp_action = clamp_action
 
+    # ---------- RL training ----------#
+
     def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma):
 
         # get current Q-function
-        actions_flat = torch.flatten(actions, start_dim=-2)
-        current_q1, current_q2 = self.critic(obs, actions_flat)
+        current_q1, current_q2 = self.critic(obs, actions)
 
         # get next Q-function
         next_actions = self.forward(
             cond=next_obs,
             deterministic=False,
-        )  # in DiffusionModel, forward() has no gradient, which is desired here.
-        next_actions_flat = torch.flatten(next_actions, start_dim=-2)
-        next_q1, next_q2 = self.critic(next_obs, next_actions_flat)
+        )  # forward() has no gradient, which is desired here.
+        next_q1, next_q2 = self.critic(next_obs, next_actions)
         next_q = torch.min(next_q1, next_q2)
 
         # terminal state mask
@@ -75,13 +75,15 @@ class DQLDiffusion(DiffusionModel):
         return loss_critic
 
     def loss_actor(self, obs, actions, q1, q2, eta):
-        bc_loss = self.loss(actions, {0: obs})
+        bc_loss = self.loss(actions, obs)
         if np.random.uniform() > 0.5:
             q_loss = -q1.mean() / q2.abs().mean().detach()
         else:
             q_loss = -q2.mean() / q1.abs().mean().detach()
         actor_loss = bc_loss + eta * q_loss
         return actor_loss
+
+    # ---------- Sampling ----------#``
 
     # override
     @torch.no_grad()
@@ -91,15 +93,10 @@ class DQLDiffusion(DiffusionModel):
         deterministic=False,
     ):
         device = self.betas.device
-        B = cond.shape[0]
-        if isinstance(cond, dict):
-            raise NotImplementedError("Not implemented for images")
-        else:
-            B = cond.shape[0]
-            cond = cond[:, : self.cond_steps]
+        B = len(cond["state"])
 
         # Loop
-        x = torch.randn((B, self.horizon_steps, self.transition_dim), device=device)
+        x = torch.randn((B, self.horizon_steps, self.action_dim), device=device)
         t_all = list(reversed(range(self.denoising_steps)))
         for i, t in enumerate(t_all):
             t_b = make_timesteps(B, t, device)
@@ -136,15 +133,10 @@ class DQLDiffusion(DiffusionModel):
         Differentiable forward pass used in actor training.
         """
         device = self.betas.device
-        B = cond.shape[0]
-        if isinstance(cond, dict):
-            raise NotImplementedError("Not implemented for images")
-        else:
-            B = cond.shape[0]
-            cond = cond[:, : self.cond_steps]
+        B = len(cond["state"])
 
         # Loop
-        x = torch.randn((B, self.horizon_steps, self.transition_dim), device=device)
+        x = torch.randn((B, self.horizon_steps, self.action_dim), device=device)
         t_all = list(reversed(range(self.denoising_steps)))
         for i, t in enumerate(t_all):
             t_b = make_timesteps(B, t, device)

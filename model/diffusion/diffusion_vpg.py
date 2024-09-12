@@ -1,14 +1,20 @@
 """
-Policy gradient with diffusion policy.
+Policy gradient with diffusion policy. VPG: vanilla policy gradient
 
-VPG: vanilla policy gradient
+K: number of denoising steps
+To: observation sequence length
+Ta: action chunk size
+Do: observation dimension
+Da: action dimension
+
+C: image channels
+H, W: image height and width
 
 """
 
 import copy
 import torch
 import logging
-import einops
 
 log = logging.getLogger(__name__)
 import torch.nn.functional as F
@@ -106,7 +112,11 @@ class VPGDiffusion(DiffusionModel):
     # ---------- Sampling ----------#
 
     def step(self):
-        """Update min_sampling_denoising_std annealing and fine-tuning denoising steps annealing. Both not used currently"""
+        """
+        Anneal min_sampling_denoising_std and fine-tuning denoising steps
+
+        Current configs do not apply annealing
+        """
         # anneal min_sampling_denoising_std
         if type(self.min_sampling_denoising_std) is not float:
             self.min_sampling_denoising_std.step()
@@ -142,7 +152,7 @@ class VPGDiffusion(DiffusionModel):
         self,
         x,
         t,
-        cond=None,
+        cond,
         index=None,
         use_base_policy=False,
         deterministic=False,
@@ -160,12 +170,8 @@ class VPGDiffusion(DiffusionModel):
 
         # overwrite noise for fine-tuning steps
         if len(ft_indices) > 0:
-            if cond is not None:
-                if isinstance(cond, dict):
-                    cond = {key: cond[key][ft_indices] for key in cond}
-                else:
-                    cond = cond[ft_indices]
-            noise_ft = actor(x[ft_indices], t[ft_indices], cond=cond)
+            cond_ft = {key: cond[key][ft_indices] for key in cond}
+            noise_ft = actor(x[ft_indices], t[ft_indices], cond=cond_ft)
             noise[ft_indices] = noise_ft
 
         # Predict x_0
@@ -208,7 +214,8 @@ class VPGDiffusion(DiffusionModel):
             if deterministic:
                 etas = torch.zeros((x.shape[0], 1, 1)).to(x.device)
             else:
-                etas = self.eta(cond).unsqueeze(1)  # B x 1 x (transition_dim or 1)
+                # TODO: eta cond
+                etas = self.eta(cond).unsqueeze(1)  # B x 1 x (Da or 1)
             sigma = (
                 etas
                 * ((1 - alpha_prev) / (1 - alpha) * (1 - alpha / alpha_prev)) ** 0.5
@@ -242,30 +249,26 @@ class VPGDiffusion(DiffusionModel):
         Forward pass for sampling actions.
 
         Args:
-            cond: (batch_size, obs_step, obs_dim)
-            deterministic: whether to sample deterministically
-            return_chain: whether to return the chain of samples
-            use_base_policy: whether to use the base policy instead
+            cond: dict with key state/rgb; more recent obs at the end
+                state: (B, To, Do)
+                rgb: (B, To, C, H, W)
+            deterministic: If true, then std=0 with DDIM, or with DDPM, use normal schedule (instead of clipping at a higher value)
+            return_chain: whether to return the entire chain of denoised actions
+            use_base_policy: whether to use the frozen pre-trained policy instead
         Return:
             Sample: namedtuple with fields:
-                trajectories: (batch_size, horizon_steps, transition_dim)
-                values: (batch_size, )
-                chain: (batch_size, denoising_steps + 1, horizon_steps, transition_dim)
+                trajectories: (B, Ta, Da)
+                chain: (B, K + 1, Ta, Da)
         """
         device = self.betas.device
-        if isinstance(cond, dict):
-            B = cond["state"].shape[0]
-            cond["state"] = cond["state"][:, : self.cond_steps]
-            cond["rgb"] = cond["rgb"][:, : self.cond_steps]
-        else:
-            B = cond.shape[0]
-            cond = cond[:, : self.cond_steps]
+        sample_data = cond["state"] if "state" in cond else cond["rgb"]
+        B = len(sample_data)
 
         # Get updated minimum sampling denoising std
         min_sampling_denoising_std = self.get_min_sampling_denoising_std()
 
         # Loop
-        x = torch.randn((B, self.horizon_steps, self.transition_dim), device=device)
+        x = torch.randn((B, self.horizon_steps, self.action_dim), device=device)
         if self.use_ddim:
             t_all = self.ddim_t
         else:
@@ -317,17 +320,16 @@ class VPGDiffusion(DiffusionModel):
                     self.ddim_steps - self.ft_denoising_steps - 1
                 ):
                     chain.append(x)
-            values = torch.zeros(len(x), device=x.device)
 
         if return_chain:
             chain = torch.stack(chain, dim=1)
-        return Sample(x, values, chain)
+        return Sample(x, chain)
 
     # ---------- RL training ----------#
 
     def get_logprobs(
         self,
-        obs,
+        cond,
         chains,
         get_ent: bool = False,
         use_base_policy: bool = False,
@@ -336,35 +338,25 @@ class VPGDiffusion(DiffusionModel):
         Calculating the logprobs of the entire chain of denoised actions.
 
         Args:
-        obs: (B, obs_step, obs_dim)
-        chains: (B, num_denoising_step+1, horizon_step, action_dim)
-        get_ent: flag for returning entropy
-        use_base_policy: flag for using base policy
+            cond: dict with key state/rgb; more recent obs at the end
+                state: (B, To, Do)
+                rgb: (B, To, C, H, W)
+            chains: (B, K+1, Ta, Da)
+            get_ent: flag for returning entropy
+            use_base_policy: flag for using base policy
 
         Returns:
-        logprobs: (B x num_denoising_steps, horizon_step, action_dim)
-        entropy (if get_ent=True):  (B x num_denoising_steps, horizon_step)
+            logprobs: (B x K, Ta, Da)
+            entropy (if get_ent=True):  (B x K, Ta)
         """
-        # Repeat obs conditioning for denoising_steps
-        if isinstance(obs, dict):
-            obs = {
-                key: obs[key]
-                .unsqueeze(1)
-                .repeat(1, self.ft_denoising_steps, *(1,) * (obs[key].ndim - 1))
-                for key in obs
-            }
-        else:
-            obs = einops.repeat(obs, "b h d -> b t h d", t=self.ft_denoising_steps)
-
-        # flatten the first two dimensions
-        if isinstance(obs, dict):
-            cond = obs
-            for key in cond:
-                cond[key] = einops.rearrange(cond[key], "b t ... -> (b t) ...")
-                cond[key] = cond[key][:, : self.cond_steps]
-        else:
-            cond = einops.rearrange(obs, "b t h d -> (b t) h d")
-            cond = cond[:, : self.cond_steps]
+        # Repeat cond for denoising_steps, flatten batch and time dimensions
+        cond = {
+            key: cond[key]
+            .unsqueeze(1)
+            .repeat(1, self.ft_denoising_steps, *(1,) * (cond[key].ndim - 1))
+            .flatten(start_dim=0, end_dim=1)
+            for key in cond
+        }  # less memory usage than einops?
 
         # Repeat t for batch dim, keep it 1-dim
         if self.use_ddim:
@@ -393,8 +385,8 @@ class VPGDiffusion(DiffusionModel):
         chains_next = chains[:, 1:]
 
         # Flatten first two dimensions
-        chains_prev = chains_prev.reshape(-1, self.horizon_steps, self.transition_dim)
-        chains_next = chains_next.reshape(-1, self.horizon_steps, self.transition_dim)
+        chains_prev = chains_prev.reshape(-1, self.horizon_steps, self.action_dim)
+        chains_next = chains_next.reshape(-1, self.horizon_steps, self.action_dim)
 
         # Forward pass with previous chains
         next_mean, logvar, eta = self.p_mean_var(
@@ -414,44 +406,35 @@ class VPGDiffusion(DiffusionModel):
             return log_prob, eta
         return log_prob
 
-    def loss(self, obs, chains, reward):
+    def loss(self, cond, chains, reward):
         """
         REINFORCE loss. Not used right now.
 
         Args:
-        obs: (n_steps, n_envs, obs_dim)
-        chains: (n_steps, n_envs, num_denoising_step+1, horizon_step, action_dim)
-        reward (to go): (n_steps, n_envs)
+            cond: dict with key state/rgb; more recent obs at the end
+                state: (B, To, Do)
+                rgb: (B, To, C, H, W)
+            chains: (B, K+1, Ta, Da)
+            reward (to go): (b,)
         """
-        if torch.is_tensor(reward):
-            assert not reward.requires_grad
-
-        n_steps, n_envs, _ = obs.shape
-
-        # Flatten first two dimensions
-        obs = einops.rearrange(obs, "s e d -> (s e) d")
-        chains = einops.rearrange(chains, "s e t h d -> (s e) t h d")
-        reward = reward.reshape(-1)
-
         # Get advantage
         with torch.no_grad():
-            value = self.critic(obs).squeeze()
+            value = self.critic(cond).squeeze()
         advantage = reward - value
 
         # Get logprobs for denoising steps from T-1 to 0
-        logprobs, eta = self.get_logprobs(obs, chains, get_ent=True)
-        # (n_steps x n_envs x denoising_steps) x horizon_steps x (obs_dim+action_dim)
+        logprobs, eta = self.get_logprobs(cond, chains, get_ent=True)
+        # (n_steps x n_envs x K) x Ta x (Do+Da)
 
         # Ignore obs dimension, and then sum over action dimension
         logprobs = logprobs[:, :, : self.action_dim].sum(-1)
-        # -> (n_steps x n_envs x denoising_steps) x horizon_steps
+        # -> (n_steps x n_envs x K) x Ta
 
-        # -> (n_steps x n_envs) x denoising_steps x horizon_steps
-        logprobs = logprobs.reshape(
-            (n_steps * n_envs, self.denoising_steps, self.horizon_steps)
-        )
+        # -> (n_steps x n_envs) x K x Ta
+        logprobs = logprobs.reshape((-1, self.denoising_steps, self.horizon_steps))
+
         # Sum/avg over denoising steps
-        logprobs = logprobs.mean(-2)  # -> (n_steps x n_envs) x horizon_steps
+        logprobs = logprobs.mean(-2)  # -> (n_steps x n_envs) x Ta
 
         # Sum/avg over horizon steps
         logprobs = logprobs.mean(-1)  # -> (n_steps x n_envs)
@@ -460,6 +443,6 @@ class VPGDiffusion(DiffusionModel):
         loss_actor = torch.mean(-logprobs * advantage)
 
         # Train critic to predict state value
-        pred = self.critic(obs).squeeze()
+        pred = self.critic(cond).squeeze()
         loss_critic = F.mse_loss(pred, reward)
         return loss_actor, loss_critic, eta

@@ -1,10 +1,12 @@
 """
 Environment wrapper for D3IL environments with state observations.
 
+For consistency, we will use Dict{} for the observation space, with the key "state" for the state observation.
 """
 
 import numpy as np
 import gym
+from gym import spaces
 
 
 class D3ilLowdimWrapper(gym.Env):
@@ -12,28 +14,27 @@ class D3ilLowdimWrapper(gym.Env):
         self,
         env,
         normalization_path,
-        # init_state=None,
-        # render_hw=(256, 256),
-        # render_camera_name="agentview",
     ):
         self.env = env
-        # self.init_state = init_state
-        # self.render_hw = render_hw
-        # self.render_camera_name = render_camera_name
 
         # setup spaces
         self.action_space = env.action_space
-        self.observation_space = env.observation_space
         normalization = np.load(normalization_path)
         self.obs_min = normalization["obs_min"]
         self.obs_max = normalization["obs_max"]
         self.action_min = normalization["action_min"]
         self.action_max = normalization["action_max"]
 
-    # def get_observation(self):
-    #     raw_obs = self.env.get_observation()
-    #     obs = np.concatenate([raw_obs[key] for key in self.obs_keys], axis=0)
-    #     return obs
+        self.observation_space = spaces.Dict()
+        obs_example = self.env.reset()
+        low = np.full_like(obs_example, fill_value=-1)
+        high = np.full_like(obs_example, fill_value=1)
+        self.observation_space["state"] = spaces.Box(
+            low=low,
+            high=high,
+            shape=low.shape,
+            dtype=low.dtype,
+        )
 
     def seed(self, seed=None):
         if seed is not None:
@@ -48,9 +49,6 @@ class D3ilLowdimWrapper(gym.Env):
         new_seed = options.get(
             "seed", None
         )  # used to set all environments to specified seeds
-        # if self.init_state is not None:
-        #     # always reset to the same state to be compatible with gym
-        #     self.env.reset_to({"states": self.init_state})
         if new_seed is not None:
             self.seed(seed=new_seed)
             obs = self.env.reset()
@@ -60,7 +58,7 @@ class D3ilLowdimWrapper(gym.Env):
 
         # normalize
         obs = self.normalize_obs(obs)
-        return obs
+        return {"state": obs}
 
     def normalize_obs(self, obs):
         return 2 * ((obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5)
@@ -75,7 +73,7 @@ class D3ilLowdimWrapper(gym.Env):
 
         # normalize
         obs = self.normalize_obs(obs)
-        return obs, reward, done, info
+        return {"state": obs}, reward, done, info
 
     def render(self, mode="rgb_array"):
         h, w = self.render_hw

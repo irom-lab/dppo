@@ -22,7 +22,6 @@ class GaussianModel(torch.nn.Module):
         super().__init__()
         self.device = device
         self.network = network.to(device)
-        self.horizon_steps = horizon_steps
         if network_path is not None:
             checkpoint = torch.load(
                 network_path, map_location=self.device, weights_only=True
@@ -35,15 +34,15 @@ class GaussianModel(torch.nn.Module):
         log.info(
             f"Number of network parameters: {sum(p.numel() for p in self.parameters())}"
         )
+        self.horizon_steps = horizon_steps
 
-    def loss(self, true_action, cond, ent_coef):
+    def loss(
+        self,
+        true_action,
+        cond,
+        ent_coef,
+    ):
         B = len(true_action)
-        if isinstance(
-            cond, dict
-        ):  # image and state, only using one step observation right now
-            cond = cond[0]
-        else:
-            cond = cond[0].reshape(B, -1)
         dist = self.forward_train(
             cond,
             deterministic=False,
@@ -79,10 +78,7 @@ class GaussianModel(torch.nn.Module):
         randn_clip_value=10,
         network_override=None,
     ):
-        if isinstance(cond, dict):
-            B = cond["state"].shape[0]
-        else:
-            B = cond.shape[0]
+        B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
         T = self.horizon_steps
         dist = self.forward_train(
             cond,

@@ -107,15 +107,13 @@ model:
     transition_dim: ${transition_dim}
   critic:
     _target_: model.common.critic.CriticObs
-    obs_dim: ${obs_dim}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     mlp_dims: [512, 512, 512]
     activation_type: Mish
     residual_style: True
   ft_denoising_steps: ${ft_denoising_steps}
-  transition_dim: ${transition_dim}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  cond_steps: ${cond_steps}
   denoising_steps: ${denoising_steps}
   device: ${device}

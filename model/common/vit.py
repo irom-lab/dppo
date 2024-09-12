@@ -24,7 +24,12 @@ class VitEncoderConfig:
 
 
 class VitEncoder(nn.Module):
-    def __init__(self, obs_shape: List[int], cfg: VitEncoderConfig):
+    def __init__(
+        self,
+        obs_shape: List[int],
+        cfg: VitEncoderConfig,
+        num_channel=3,
+    ):
         super().__init__()
         self.obs_shape = obs_shape
         self.cfg = cfg
@@ -34,6 +39,7 @@ class VitEncoder(nn.Module):
             embed_norm=cfg.embed_norm,
             num_head=cfg.num_heads,
             depth=cfg.depth,
+            num_channel=num_channel,
         )
 
         self.num_patch = self.vit.num_patches
@@ -50,9 +56,9 @@ class VitEncoder(nn.Module):
 
 
 class PatchEmbed1(nn.Module):
-    def __init__(self, embed_dim):
+    def __init__(self, embed_dim, num_channel=3):
         super().__init__()
-        self.conv = nn.Conv2d(3, embed_dim, kernel_size=8, stride=8)
+        self.conv = nn.Conv2d(num_channel, embed_dim, kernel_size=8, stride=8)
 
         self.num_patch = 144
         self.patch_dim = embed_dim
@@ -64,10 +70,10 @@ class PatchEmbed1(nn.Module):
 
 
 class PatchEmbed2(nn.Module):
-    def __init__(self, embed_dim, use_norm):
+    def __init__(self, embed_dim, use_norm, num_channel=3):
         super().__init__()
         layers = [
-            nn.Conv2d(3, embed_dim, kernel_size=8, stride=4),
+            nn.Conv2d(num_channel, embed_dim, kernel_size=8, stride=4),
             nn.GroupNorm(embed_dim, embed_dim) if use_norm else nn.Identity(),
             nn.ReLU(),
             nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=2),
@@ -132,13 +138,23 @@ class TransformerLayer(nn.Module):
 
 
 class MinVit(nn.Module):
-    def __init__(self, embed_style, embed_dim, embed_norm, num_head, depth):
+    def __init__(
+        self,
+        embed_style,
+        embed_dim,
+        embed_norm,
+        num_head,
+        depth,
+        num_channel=3,
+    ):
         super().__init__()
 
         if embed_style == "embed1":
-            self.patch_embed = PatchEmbed1(embed_dim)
+            self.patch_embed = PatchEmbed1(embed_dim, num_channel=num_channel)
         elif embed_style == "embed2":
-            self.patch_embed = PatchEmbed2(embed_dim, use_norm=embed_norm)
+            self.patch_embed = PatchEmbed2(
+                embed_dim, use_norm=embed_norm, num_channel=num_channel
+            )
         else:
             assert False
 
@@ -217,20 +233,10 @@ def test_transformer_layer():
 
 
 if __name__ == "__main__":
-    import rich.traceback
-    import pyrallis
-
-    @dataclass
-    class MainConfig:
-        net_type: str = "vit"
-        obs_shape: list[int] = field(default_factory=lambda: [3, 96, 96])
-        vit: VitEncoderConfig = field(default_factory=lambda: VitEncoderConfig())
-
-    rich.traceback.install()
-    cfg = pyrallis.parse(config_class=MainConfig)  # type: ignore
-    enc = VitEncoder(cfg.obs_shape, cfg.vit)
+    obs_shape = [6, 96, 96]
+    enc = VitEncoder([6, 96, 96], VitEncoderConfig())
 
     print(enc)
-    x = torch.rand(1, *cfg.obs_shape) * 255
+    x = torch.rand(1, *obs_shape) * 255
     print("output size:", enc(x, flatten=False).size())
     print("repr dim:", enc.repr_dim, ", real dim:", enc(x, flatten=True).size())

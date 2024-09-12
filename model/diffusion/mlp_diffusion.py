@@ -25,6 +25,7 @@ class VisionDiffusionMLP(nn.Module):
         transition_dim,
         horizon_steps,
         cond_dim,
+        img_cond_steps=1,
         time_dim=16,
         mlp_dims=[256, 256],
         activation_type="Mish",
@@ -46,6 +47,8 @@ class VisionDiffusionMLP(nn.Module):
         if augment:
             self.aug = RandomShiftsAug(pad=4)
         self.augment = augment
+        self.num_img = num_img
+        self.img_cond_steps = img_cond_steps
         if spatial_emb > 0:
             assert spatial_emb > 1, "this is the dimension"
             if num_img > 1:
@@ -101,36 +104,44 @@ class VisionDiffusionMLP(nn.Module):
         self,
         x,
         time,
-        cond=None,
+        cond: dict,
         **kwargs,
     ):
         """
-        x: (B,T,obs_dim)
+        x: (B, Ta, Da)
         time: (B,) or int, diffusion step
-        cond: dict (B,cond_step,cond_dim)
-        output: (B,T,input_dim)
+        cond: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
+            rgb: (B, To, C, H, W)
+
+        TODO long term: more flexible handling of cond
         """
-        # flatten T and input_dim
-        B, T, input_dim = x.shape
+        B, Ta, Da = x.shape
+        _, T_rgb, C, H, W = cond["rgb"].shape
+
+        # flatten chunk
         x = x.view(B, -1)
 
-        # flatten cond_dim if exists
-        if cond["rgb"].ndim == 5:
-            rgb = einops.rearrange(cond["rgb"], "b d c h w -> (b d) c h w")
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # Take recent images --- sometimes we want to use fewer img_cond_steps than cond_steps (e.g., 1 image but 3 prio)
+        rgb = cond["rgb"][:, -self.img_cond_steps :]
+
+        # concatenate images in cond by channels
+        if self.num_img > 1:
+            rgb = rgb.reshape(B, T_rgb, self.num_img, 3, H, W)
+            rgb = einops.rearrange(rgb, "b t n c h w -> b n (t c) h w")
         else:
-            rgb = cond["rgb"]
-        if cond["state"].ndim == 3:
-            state = einops.rearrange(cond["state"], "b d c -> (b d) c")
-        else:
-            state = cond["state"]
+            rgb = einops.rearrange(rgb, "b t c h w -> b (t c) h w")
 
         # convert rgb to float32 for augmentation
         rgb = rgb.float()
 
         # get vit output - pass in two images separately
-        if rgb.shape[1] == 6:  # TODO: properly handle multiple images
-            rgb1 = rgb[:, :3]
-            rgb2 = rgb[:, 3:]
+        if self.num_img > 1:  # TODO: properly handle multiple images
+            rgb1 = rgb[:, 0]
+            rgb2 = rgb[:, 1]
             if self.augment:
                 rgb1 = self.aug(rgb1)
                 rgb2 = self.aug(rgb2)
@@ -141,7 +152,7 @@ class VisionDiffusionMLP(nn.Module):
             feat = torch.cat([feat1, feat2], dim=-1)
         else:  # single image
             if self.augment:
-                rgb = self.aug(rgb)  # uint8 -> float32
+                rgb = self.aug(rgb)
             feat = self.backbone(rgb)
 
             # compress
@@ -159,7 +170,7 @@ class VisionDiffusionMLP(nn.Module):
 
         # mlp
         out = self.mlp_mean(x)
-        return out.view(B, T, input_dim)
+        return out.view(B, Ta, Da)
 
 
 class DiffusionMLP(nn.Module):
@@ -210,27 +221,32 @@ class DiffusionMLP(nn.Module):
         self,
         x,
         time,
-        cond=None,
+        cond,
         **kwargs,
     ):
         """
-        x: (B,T,obs_dim)
+        x: (B, Ta, Da)
         time: (B,) or int, diffusion step
-        cond: (B,cond_step,cond_dim)
-        output: (B,T,input_dim)
+        cond: dict with key state/rgb; more recent obs at the end
+            state: (B, To, Do)
         """
-        # flatten T and input_dim
-        B, T, input_dim = x.shape
+        B, Ta, Da = x.shape
+
+        # flatten chunk
         x = x.view(B, -1)
-        cond = cond.view(B, -1) if cond is not None else None
+
+        # flatten history
+        state = cond["state"].view(B, -1)
+
+        # obs encoder
         if hasattr(self, "cond_mlp"):
-            cond = self.cond_mlp(cond)
+            state = self.cond_mlp(state)
 
         # append time and cond
         time = time.view(B, 1)
         time_emb = self.time_embedding(time).view(B, self.time_dim)
-        x = torch.cat([x, time_emb, cond], dim=-1)
+        x = torch.cat([x, time_emb, state], dim=-1)
 
-        # mlp
+        # mlp head
         out = self.mlp_mean(x)
-        return out.view(B, T, input_dim)
+        return out.view(B, Ta, Da)

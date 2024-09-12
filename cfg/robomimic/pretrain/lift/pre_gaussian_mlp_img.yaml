@@ -17,6 +17,7 @@ action_dim: 7
 transition_dim: ${action_dim}
 horizon_steps: 4
 cond_steps: 1
+img_cond_steps: 1
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
@@ -52,6 +53,7 @@ model:
     backbone:
       _target_: model.common.vit.VitEncoder
       obs_shape: ${shape_meta.obs.rgb.shape}
+      num_channel: ${eval:'${shape_meta.obs.rgb.shape[0]} * ${img_cond_steps}'} # each image patch is history concatenated
       cfg:
         patch_size: 8
         depth: 1
@@ -64,6 +66,7 @@ model:
     mlp_dims: [512, 512, 512]
     residual_style: True
     fixed_std: 0.1
+    img_cond_steps: ${img_cond_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
@@ -80,4 +83,5 @@ train_dataset:
   horizon_steps: ${horizon_steps}
   max_n_episodes: 100
   cond_steps: ${cond_steps}
+  img_cond_steps: ${img_cond_steps}
   device: ${device}

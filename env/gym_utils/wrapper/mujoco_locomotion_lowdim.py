@@ -1,10 +1,12 @@
 """
 Environment wrapper for Gym environments (MuJoCo locomotion tasks) with state observations.
 
+For consistency, we will use Dict{} for the observation space, with the key "state" for the state observation.
 """
 
 import numpy as np
 import gym
+from gym import spaces
 
 
 class MujocoLocomotionLowdimWrapper(gym.Env):
@@ -17,12 +19,22 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
 
         # setup spaces
         self.action_space = env.action_space
-        self.observation_space = env.observation_space
         normalization = np.load(normalization_path)
         self.obs_min = normalization["obs_min"]
         self.obs_max = normalization["obs_max"]
         self.action_min = normalization["action_min"]
         self.action_max = normalization["action_max"]
+
+        self.observation_space = spaces.Dict()
+        obs_example = self.env.reset()
+        low = np.full_like(obs_example, fill_value=-1)
+        high = np.full_like(obs_example, fill_value=1)
+        self.observation_space["state"] = spaces.Box(
+            low=low,
+            high=high,
+            shape=low.shape,
+            dtype=low.dtype,
+        )
 
     def seed(self, seed=None):
         if seed is not None:
@@ -40,7 +52,7 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
 
         # normalize
         obs = self.normalize_obs(raw_obs)
-        return obs
+        return {"state": obs}
 
     def normalize_obs(self, obs):
         return 2 * ((obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5)
@@ -55,7 +67,7 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
 
         # normalize
         obs = self.normalize_obs(raw_obs)
-        return obs, reward, done, info
+        return {"state": obs}, reward, done, info
 
     def render(self, **kwargs):
         return self.env.render()

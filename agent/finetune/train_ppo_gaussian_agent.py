@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import logging
 import wandb
+import math
 
 log = logging.getLogger(__name__)
 from util.timer import Timer
@@ -55,7 +56,9 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                 )
 
             # Holder
-            obs_trajs = np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+            obs_trajs = {
+                "state": np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+            }
             samples_trajs = np.empty(
                 (
                     0,
@@ -67,8 +70,8 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
             reward_trajs = np.empty((0, self.n_envs))
             obs_full_trajs = np.empty((0, self.n_envs, self.obs_dim))
             obs_full_trajs = np.vstack(
-                (obs_full_trajs, prev_obs_venv[None].squeeze(2))
-            )  # remove cond_step dim
+                (obs_full_trajs, prev_obs_venv["state"][:, -1][None])
+            )  # save current obs
 
             # Collect a set of trajectories from env
             for step in range(self.n_steps):
@@ -77,26 +80,33 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
 
                 # Select action
                 with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     samples = self.model(
-                        cond=torch.from_numpy(prev_obs_venv).float().to(self.device),
+                        cond=cond,
                         deterministic=eval_mode,
                     )
                     output_venv = samples.cpu().numpy()
-                action_venv = output_venv[:, : self.act_steps, : self.action_dim]
-                obs_trajs = np.vstack((obs_trajs, prev_obs_venv[None]))
-                samples_trajs = np.vstack((samples_trajs, output_venv[None]))
+                action_venv = output_venv[:, : self.act_steps]
 
                 # Apply multi-step action
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
-                if self.save_full_observations:
-                    obs_full_venv = np.vstack(
-                        [info["full_obs"][None] for info in info_venv]
-                    )  # n_envs x n_act_steps x obs_dim
+                if self.save_full_observations:  # state-only
+                    obs_full_venv = np.array(
+                        [info["full_obs"]["state"] for info in info_venv]
+                    )  # n_envs x act_steps x obs_dim
                     obs_full_trajs = np.vstack(
                         (obs_full_trajs, obs_full_venv.transpose(1, 0, 2))
                     )
+                obs_trajs["state"] = np.vstack(
+                    (obs_trajs["state"], prev_obs_venv["state"][None])
+                )
+                samples_trajs = np.vstack((samples_trajs, output_venv[None]))
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
                 dones_trajs = np.vstack((dones_trajs, done_venv[None]))
                 firsts_trajs[step + 1] = done_venv
@@ -144,15 +154,25 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                 success_rate = 0
                 log.info("[WARNING] No episode completed within the iteration!")
 
-            # Update
+            # Update models
             if not eval_mode:
                 with torch.no_grad():
-                    # Calculate value and logprobs - split into batches to prevent out of memory
-                    obs_t = einops.rearrange(
-                        torch.from_numpy(obs_trajs).float().to(self.device),
-                        "s e h d -> (s e) h d",
+                    obs_trajs["state"] = (
+                        torch.from_numpy(obs_trajs["state"]).float().to(self.device)
                     )
-                    obs_ts = torch.split(obs_t, self.logprob_batch_size, dim=0)
+
+                    # Calculate value and logprobs - split into batches to prevent out of memory
+                    num_split = math.ceil(
+                        self.n_envs * self.n_steps / self.logprob_batch_size
+                    )
+                    obs_ts = [{} for _ in range(num_split)]
+                    obs_k = einops.rearrange(
+                        obs_trajs["state"],
+                        "s e ... -> (s e) ...",
+                    )
+                    obs_ts_k = torch.split(obs_k, self.logprob_batch_size, dim=0)
+                    for i, obs_t in enumerate(obs_ts_k):
+                        obs_ts[i]["state"] = obs_t
                     values_trajs = np.empty((0, self.n_envs))
                     for obs in obs_ts:
                         values = self.model.critic(obs).cpu().numpy().flatten()
@@ -184,7 +204,11 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                         reward_trajs = reward_trajs_transpose.T
 
                     # bootstrap value with GAE if not done - apply reward scaling with constant if specified
-                    obs_venv_ts = torch.from_numpy(obs_venv).float().to(self.device)
+                    obs_venv_ts = {
+                        "state": torch.from_numpy(obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
                     with torch.no_grad():
                         next_value = (
                             self.model.critic(obs_venv_ts).reshape(1, -1).cpu().numpy()
@@ -215,10 +239,12 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                     returns_trajs = advantages_trajs + values_trajs
 
                 # k for environment step
-                obs_k = einops.rearrange(
-                    torch.tensor(obs_trajs).float().to(self.device),
-                    "s e h d -> (s e) h d",
-                )
+                obs_k = {
+                    "state": einops.rearrange(
+                        obs_trajs["state"],
+                        "s e ... -> (s e) ...",
+                    )
+                }
                 samples_k = einops.rearrange(
                     torch.tensor(samples_trajs).float().to(self.device),
                     "s e h d -> (s e) h d",
@@ -250,7 +276,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                         start = batch * self.batch_size
                         end = start + self.batch_size
                         inds_b = inds_k[start:end]  # b for batch
-                        obs_b = obs_k[inds_b]
+                        obs_b = {"state": obs_k["state"][inds_b]}
                         samples_b = samples_k[inds_b]
                         returns_b = returns_k[inds_b]
                         values_b = values_k[inds_b]
@@ -313,7 +339,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                     np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
                 )
 
-            # Plot state trajectories
+            # Plot state trajectories (only in D3IL)
             if (
                 self.itr % self.render_freq == 0
                 and self.n_render > 0

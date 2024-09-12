@@ -213,7 +213,7 @@ def make_async(
             "render.modes": ["human", "rgb_array", "depth_array"],
             "video.frames_per_second": 12,
         }
-        return MultiStep(env=env)  # use all defaults
+        return MultiStep(env=env, n_obs_steps=wrappers.multi_step.n_obs_steps)
 
     env_fns = [_make_env for _ in range(num_envs)]
     return (

@@ -94,10 +94,9 @@ model:
     transition_dim: ${transition_dim}
   critic:
     _target_: model.common.critic.CriticObs
-    obs_dim: ${obs_dim}
     mlp_dims: [256, 256, 256]
     activation_type: Mish
     residual_style: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
   horizon_steps: ${horizon_steps}
-  cond_steps: ${cond_steps}
   device: ${device}
