@@ -68,7 +68,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             last_itr_eval = eval_mode
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
-            dones_trajs = np.empty((0, self.n_envs))
+            dones_trajs = np.zeros((self.n_steps, self.n_envs))
             firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
@@ -138,7 +138,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 )
                 chains_trajs = np.vstack((chains_trajs, chains_venv[None]))
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
-                dones_trajs = np.vstack((dones_trajs, done_venv[None]))
+                dones_trajs[step] = done_venv
                 firsts_trajs[step + 1] = done_venv
                 prev_obs_venv = obs_venv
 
@@ -252,24 +252,20 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     lastgaelam = 0
                     for t in reversed(range(self.n_steps)):
                         if t == self.n_steps - 1:
-                            nextnonterminal = 1.0 - done_venv
                             nextvalues = next_value
                         else:
-                            nextnonterminal = 1.0 - dones_trajs[t + 1]
                             nextvalues = values_trajs[t + 1]
+                        nonterminal = 1.0 - dones_trajs[t]
                         # delta = r + gamma*V(st+1) - V(st)
                         delta = (
                             reward_trajs[t] * self.reward_scale_const
-                            + self.gamma * nextvalues * nextnonterminal
+                            + self.gamma * nextvalues * nonterminal
                             - values_trajs[t]
                         )
                         # A = delta_t + gamma*lamdba*delta_{t+1} + ...
                         advantages_trajs[t] = lastgaelam = (
                             delta
-                            + self.gamma
-                            * self.gae_lambda
-                            * nextnonterminal
-                            * lastgaelam
+                            + self.gamma * self.gae_lambda * nonterminal * lastgaelam
                         )
                     returns_trajs = advantages_trajs + values_trajs
 
