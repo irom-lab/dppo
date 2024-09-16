@@ -3,12 +3,13 @@ ViT image encoder implementation from IBRL, https://github.com/hengyuan-hu/ibrl
 
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 import einops
 import torch
 from torch import nn
 from torch.nn.init import trunc_normal_
+import math
 
 
 @dataclass
@@ -29,6 +30,8 @@ class VitEncoder(nn.Module):
         obs_shape: List[int],
         cfg: VitEncoderConfig,
         num_channel=3,
+        img_h=96,
+        img_w=96,
     ):
         super().__init__()
         self.obs_shape = obs_shape
@@ -40,8 +43,11 @@ class VitEncoder(nn.Module):
             num_head=cfg.num_heads,
             depth=cfg.depth,
             num_channel=num_channel,
+            img_h=img_h,
+            img_w=img_w,
         )
-
+        self.img_h = img_h
+        self.img_w = img_w
         self.num_patch = self.vit.num_patches
         self.patch_repr_dim = self.cfg.embed_dim
         self.repr_dim = self.cfg.embed_dim * self.vit.num_patches
@@ -56,11 +62,11 @@ class VitEncoder(nn.Module):
 
 
 class PatchEmbed1(nn.Module):
-    def __init__(self, embed_dim, num_channel=3):
+    def __init__(self, embed_dim, num_channel=3, img_h=96, img_w=96):
         super().__init__()
         self.conv = nn.Conv2d(num_channel, embed_dim, kernel_size=8, stride=8)
 
-        self.num_patch = 144
+        self.num_patch = math.ceil(img_h / 8) * math.ceil(img_w / 8)
         self.patch_dim = embed_dim
 
     def forward(self, x: torch.Tensor):
@@ -70,7 +76,7 @@ class PatchEmbed1(nn.Module):
 
 
 class PatchEmbed2(nn.Module):
-    def __init__(self, embed_dim, use_norm, num_channel=3):
+    def __init__(self, embed_dim, use_norm, num_channel=3, img_h=96, img_w=96):
         super().__init__()
         layers = [
             nn.Conv2d(num_channel, embed_dim, kernel_size=8, stride=4),
@@ -80,7 +86,11 @@ class PatchEmbed2(nn.Module):
         ]
         self.embed = nn.Sequential(*layers)
 
-        self.num_patch = 121  # TODO: specifically for 96x96 set by Hengyuan?
+        H1 = math.ceil((img_h - 8) / 4) + 1
+        W1 = math.ceil((img_w - 8) / 4) + 1
+        H2 = math.ceil((H1 - 3) / 2) + 1
+        W2 = math.ceil((W1 - 3) / 2) + 1
+        self.num_patch = H2 * W2
         self.patch_dim = embed_dim
 
     def forward(self, x: torch.Tensor):
@@ -146,14 +156,25 @@ class MinVit(nn.Module):
         num_head,
         depth,
         num_channel=3,
+        img_h=96,
+        img_w=96,
     ):
         super().__init__()
 
         if embed_style == "embed1":
-            self.patch_embed = PatchEmbed1(embed_dim, num_channel=num_channel)
+            self.patch_embed = PatchEmbed1(
+                embed_dim,
+                num_channel=num_channel,
+                img_h=img_h,
+                img_w=img_w,
+            )
         elif embed_style == "embed2":
             self.patch_embed = PatchEmbed2(
-                embed_dim, use_norm=embed_norm, num_channel=num_channel
+                embed_dim,
+                use_norm=embed_norm,
+                num_channel=num_channel,
+                img_h=img_h,
+                img_w=img_w,
             )
         else:
             assert False
@@ -233,8 +254,14 @@ def test_transformer_layer():
 
 
 if __name__ == "__main__":
-    obs_shape = [6, 96, 96]
-    enc = VitEncoder([6, 96, 96], VitEncoderConfig())
+    obs_shape = [6, 128, 128]
+    enc = VitEncoder(
+        obs_shape,
+        VitEncoderConfig(),
+        num_channel=obs_shape[0],
+        img_h=obs_shape[1],
+        img_w=obs_shape[2],
+    )
 
     print(enc)
     x = torch.rand(1, *obs_shape) * 255

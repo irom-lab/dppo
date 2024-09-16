@@ -122,7 +122,6 @@ class ViTCritic(CriticObs):
         cond_dim,
         img_cond_steps=1,
         spatial_emb=128,
-        patch_repr_dim=128,
         dropout=0,
         augment=False,
         num_img=1,
@@ -136,8 +135,8 @@ class ViTCritic(CriticObs):
         self.img_cond_steps = img_cond_steps
         if num_img > 1:
             self.compress1 = SpatialEmb(
-                num_patch=121,  # TODO: repr_dim // patch_repr_dim,
-                patch_dim=patch_repr_dim,
+                num_patch=self.backbone.num_patch,
+                patch_dim=self.backbone.patch_repr_dim,
                 prop_dim=cond_dim,
                 proj_dim=spatial_emb,
                 dropout=dropout,
@@ -145,8 +144,8 @@ class ViTCritic(CriticObs):
             self.compress2 = deepcopy(self.compress1)
         else:  # TODO: clean up
             self.compress = SpatialEmb(
-                num_patch=121,
-                patch_dim=patch_repr_dim,
+                num_patch=self.backbone.num_patch,
+                patch_dim=self.backbone.patch_repr_dim,
                 prop_dim=cond_dim,
                 proj_dim=spatial_emb,
                 dropout=dropout,

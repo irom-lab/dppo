@@ -244,15 +244,16 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                         .float()
                         .to(self.device)
                     }
-                    with torch.no_grad():
-                        next_value = (
-                            self.model.critic(obs_venv_ts).reshape(1, -1).cpu().numpy()
-                        )
                     advantages_trajs = np.zeros_like(reward_trajs)
                     lastgaelam = 0
                     for t in reversed(range(self.n_steps)):
                         if t == self.n_steps - 1:
-                            nextvalues = next_value
+                            nextvalues = (
+                                self.model.critic(obs_venv_ts)
+                                .reshape(1, -1)
+                                .cpu()
+                                .numpy()
+                            )
                         else:
                             nextvalues = values_trajs[t + 1]
                         nonterminal = 1.0 - dones_trajs[t]

@@ -122,7 +122,9 @@ model:
     backbone:
       _target_: model.common.vit.VitEncoder
       obs_shape: ${shape_meta.obs.rgb.shape}
-      num_channel: ${eval:'${shape_meta.obs.rgb.shape[0]} * ${img_cond_steps}'} # each image patch is history concatenated
+      num_channel: ${eval:'3 * ${img_cond_steps}'} # each image patch is history concatenated
+      img_h: ${shape_meta.obs.rgb.shape[1]}
+      img_w: ${shape_meta.obs.rgb.shape[2]}
       cfg:
         patch_size: 8
         depth: 1
@@ -146,7 +148,9 @@ model:
     backbone:
       _target_: model.common.vit.VitEncoder
       obs_shape: ${shape_meta.obs.rgb.shape}
-      num_channel: ${eval:'${shape_meta.obs.rgb.shape[0]} * ${img_cond_steps}'} # each image patch is history concatenated
+      num_channel: ${eval:'3 * ${img_cond_steps}'} # each image patch is history concatenated
+      img_h: ${shape_meta.obs.rgb.shape[1]}
+      img_w: ${shape_meta.obs.rgb.shape[2]}
       cfg:
         patch_size: 8
         depth: 1

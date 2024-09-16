@@ -34,8 +34,6 @@ class VisionDiffusionMLP(nn.Module):
         residual_style=False,
         spatial_emb=0,
         visual_feature_dim=128,
-        repr_dim=96 * 96,
-        patch_repr_dim=128,
         dropout=0,
         num_img=1,
         augment=False,
@@ -53,8 +51,8 @@ class VisionDiffusionMLP(nn.Module):
             assert spatial_emb > 1, "this is the dimension"
             if num_img > 1:
                 self.compress1 = SpatialEmb(
-                    num_patch=121,  # TODO: repr_dim // patch_repr_dim,
-                    patch_dim=patch_repr_dim,
+                    num_patch=self.backbone.num_patch,
+                    patch_dim=self.backbone.patch_repr_dim,
                     prop_dim=cond_dim,
                     proj_dim=spatial_emb,
                     dropout=dropout,
@@ -62,8 +60,8 @@ class VisionDiffusionMLP(nn.Module):
                 self.compress2 = deepcopy(self.compress1)
             else:  # TODO: clean up
                 self.compress = SpatialEmb(
-                    num_patch=121,
-                    patch_dim=patch_repr_dim,
+                    num_patch=self.backbone.num_patch,
+                    patch_dim=self.backbone.patch_repr_dim,
                     prop_dim=cond_dim,
                     proj_dim=spatial_emb,
                     dropout=dropout,
@@ -71,7 +69,7 @@ class VisionDiffusionMLP(nn.Module):
             visual_feature_dim = spatial_emb * num_img
         else:
             self.compress = nn.Sequential(
-                nn.Linear(repr_dim, visual_feature_dim),
+                nn.Linear(self.backbone.repr_dim, visual_feature_dim),
                 nn.LayerNorm(visual_feature_dim),
                 nn.Dropout(dropout),
                 nn.ReLU(),
