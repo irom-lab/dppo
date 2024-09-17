@@ -68,16 +68,16 @@ export DPPO_LOG_DIR=<your_prefered_logging_directory>
 ``` -->
 ```console
 # Gym - hopper/walker2d/halfcheetah
-python script/train.py --config-name=pre_diffusion_mlp \
+python script/run.py --config-name=pre_diffusion_mlp \
     --config-dir=cfg/gym/pretrain/hopper-medium-v2
 # Robomimic - lift/can/square/transport
-python script/train.py --config-name=pre_diffusion_mlp \
+python script/run.py --config-name=pre_diffusion_mlp \
     --config-dir=cfg/robomimic/pretrain/can
 # D3IL - avoid_m1/m2/m3
-python script/train.py --config-name=pre_diffusion_mlp \
+python script/run.py --config-name=pre_diffusion_mlp \
     --config-dir=cfg/d3il/pretrain/avoid_m1
 # Furniture-Bench - one_leg/lamp/round_table_low/med
-python script/train.py --config-name=pre_diffusion_mlp \
+python script/run.py --config-name=pre_diffusion_mlp \
     --config-dir=cfg/furniture/pretrain/one_leg_low
 ```
 
@@ -111,16 +111,16 @@ All the configs can be found under `cfg/<env>/finetune/`. A new WandB project ma
 <!-- Running the script will download the default pre-trained policy checkpoint specified in the config (`base_policy_path`) automatically, as well as the normalization statistics, to `DPPO_LOG_DIR`.  -->
 ```console
 # Gym - hopper/walker2d/halfcheetah
-python script/train.py --config-name=ft_ppo_diffusion_mlp \
+python script/run.py --config-name=ft_ppo_diffusion_mlp \
     --config-dir=cfg/gym/finetune/hopper-v2
 # Robomimic - lift/can/square/transport
-python script/train.py --config-name=ft_ppo_diffusion_mlp \
+python script/run.py --config-name=ft_ppo_diffusion_mlp \
     --config-dir=cfg/robomimic/finetune/can
 # D3IL - avoid_m1/m2/m3
-python script/train.py --config-name=ft_ppo_diffusion_mlp \
+python script/run.py --config-name=ft_ppo_diffusion_mlp \
     --config-dir=cfg/d3il/finetune/avoid_m1
 # Furniture-Bench - one_leg/lamp/round_table_low/med
-python script/train.py --config-name=ft_ppo_diffusion_mlp \
+python script/run.py --config-name=ft_ppo_diffusion_mlp \
     --config-dir=cfg/furniture/finetune/one_leg_low
 ```
 
@@ -141,11 +141,11 @@ See [here](cfg/finetuning.md) for details of the experiments in the paper.
 ## Usage - Evaluation
 Pre-trained or fine-tuned policies can be evaluated without running the fine-tuning script now. Some example configs are provided under `cfg/{gym/robomimic/furniture}/eval}` including ones below. Set `base_policy_path` to override the default checkpoint. 
 ```console
-python script/train.py --config-name=eval_diffusion_mlp \
+python script/run.py --config-name=eval_diffusion_mlp \
     --config-dir=cfg/gym/eval/hopper-v2
-python script/train.py --config-name=eval_{diffusion/gaussian}_mlp_{?img} \
+python script/run.py --config-name=eval_{diffusion/gaussian}_mlp_{?img} \
     --config-dir=cfg/robomimic/eval/can
-python script/train.py --config-name=eval_diffusion_mlp \
+python script/run.py --config-name=eval_diffusion_mlp \
     --config-dir=cfg/furniture/eval/one_leg_low
 ```
 
