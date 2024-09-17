@@ -1,0 +1,67 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.eval.eval_diffusion_agent.EvalDiffusionAgent
+
+name: ${env_name}_eval_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/furniture-eval/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: ${oc.env:DPPO_LOG_DIR}/furniture-pretrain/one_leg/one_leg_low_dim_pre_diffusion_mlp_ta8_td100/2024-07-22_20-01-16/checkpoint/state_8000.pt
+normalization_path: ${oc.env:DPPO_DATA_DIR}/furniture/${env.specific.furniture}_${env.specific.randomness}/normalization.pth
+
+seed: 42
+device: cuda:0
+env_name: ${env.specific.furniture}_${env.specific.randomness}_dim
+obs_dim: 58
+action_dim: 10
+transition_dim: ${action_dim}
+denoising_steps: 100
+cond_steps: 1
+horizon_steps: 8
+act_steps: 8
+use_ddim: True
+ddim_steps: 5
+
+n_steps: ${eval:'round(${env.max_episode_steps} / ${act_steps})'}
+render_num: 0
+
+env:
+  n_envs: 1000
+  name: ${env_name}
+  env_type: furniture
+  max_episode_steps: 700
+  best_reward_threshold_for_success: 1
+  specific:
+    headless: true
+    furniture: one_leg
+    randomness: low
+    normalization_path: ${normalization_path}
+    obs_steps: ${cond_steps}
+    act_steps: ${act_steps}
+    sparse_reward: True
+
+model:
+  _target_: model.diffusion.diffusion.DiffusionModel
+  predict_epsilon: True
+  denoised_clip_value: 1.0
+  randn_clip_value: 3
+  #
+  use_ddim: ${use_ddim}
+  ddim_steps: ${ddim_steps}
+  network_path: ${base_policy_path}
+  network:
+    _target_: model.diffusion.mlp_diffusion.DiffusionMLP
+    time_dim: 32
+    mlp_dims: [1024, 1024, 1024, 1024, 1024, 1024, 1024]
+    cond_mlp_dims: [512, 64]
+    use_layernorm: True # needed for larger MLP
+    residual_style: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    transition_dim: ${transition_dim}
+  horizon_steps: ${horizon_steps}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  denoising_steps: ${denoising_steps}
+  device: ${device}

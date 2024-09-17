@@ -83,7 +83,6 @@ python script/train.py --config-name=pre_diffusion_mlp \
 
 See [here](cfg/pretraining.md) for details of the experiments in the paper.
 
-
 ## Usage - Fine-tuning
 
 <!-- ### Set up pre-trained policy -->
@@ -138,6 +137,17 @@ See [here](cfg/finetuning.md) for details of the experiments in the paper.
 * Furniture-Bench tasks can be visualized in GUI by specifying `env.specific.headless=False` and `env.n_envs=1` in fine-tuning configs.
 * D3IL environment can be visualized in GUI by `+env.render=True`, `env.n_envs=1`, and `train.render.num=1`. There is a basic script at `script/test_d3il_render.py`.
 * Videos of trials in Robomimic tasks can be recorded by specifying `env.save_video=True`, `train.render.freq=<iterations>`, and `train.render.num=<num_video>` in fine-tuning configs.
+
+## Usage - Evaluation
+Pre-trained or fine-tuned policies can be evaluated without running the fine-tuning script now. Some example configs are provided under `cfg/{gym/robomimic/furniture}/eval}` including ones below. Set `base_policy_path` to override the default checkpoint. 
+```console
+python script/train.py --config-name=eval_diffusion_mlp \
+    --config-dir=cfg/gym/eval/hopper-v2
+python script/train.py --config-name=eval_{diffusion/gaussian}_mlp_{?img} \
+    --config-dir=cfg/robomimic/eval/can
+python script/train.py --config-name=eval_diffusion_mlp \
+    --config-dir=cfg/furniture/eval/one_leg_low
+```
 
 ## DPPO implementation
 
