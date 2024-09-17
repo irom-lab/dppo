@@ -20,8 +20,7 @@ class DQLDiffusion(DiffusionModel):
         actor,
         critic,
         use_ddim=False,
-        randn_clip_value=10,
-        clamp_action=False,
+        # modifying denoising schedule
         min_sampling_denoising_std=0.1,
         **kwargs,
     ):
@@ -34,12 +33,6 @@ class DQLDiffusion(DiffusionModel):
 
         # Minimum std used in denoising process when sampling action - helps exploration
         self.min_sampling_denoising_std = min_sampling_denoising_std
-
-        # For each denoising step, we clip sampled randn (from standard deviation) such that the sampled action is not too far away from mean
-        self.randn_clip_value = randn_clip_value
-
-        # Whether to clamp sampled action between [-1, 1]
-        self.clamp_action = clamp_action
 
     # ---------- RL training ----------#
 
@@ -110,7 +103,7 @@ class DQLDiffusion(DiffusionModel):
             # Determine the noise level
             if deterministic and t == 0:
                 std = torch.zeros_like(std)
-            elif deterministic:  # For DDPM, sample with noise
+            elif deterministic:
                 std = torch.clip(std, min=1e-3)
             else:
                 std = torch.clip(std, min=self.min_sampling_denoising_std)
@@ -120,8 +113,10 @@ class DQLDiffusion(DiffusionModel):
             x = mean + std * noise
 
             # clamp action at final step
-            if self.clamp_action and i == len(t_all) - 1:
-                x = torch.clamp(x, -1, 1)
+            if self.final_action_clip_value is not None and i == len(t_all) - 1:
+                x = torch.clamp(
+                    x, -self.final_action_clip_value, self.final_action_clip_value
+                )
         return x
 
     def forward_train(
@@ -160,6 +155,6 @@ class DQLDiffusion(DiffusionModel):
             x = mean + std * noise
 
             # clamp action at final step
-            if self.clamp_action and i == len(t_all) - 1:
+            if self.final_action_clip_value and i == len(t_all) - 1:
                 x = torch.clamp(x, -1, 1)
         return x

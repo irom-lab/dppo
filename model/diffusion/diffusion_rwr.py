@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 import torch.nn.functional as F
 
 from model.diffusion.diffusion import DiffusionModel
-from model.diffusion.sampling import make_timesteps, extract
+from model.diffusion.sampling import make_timesteps
 
 
 class RWRDiffusion(DiffusionModel):
@@ -19,20 +19,12 @@ class RWRDiffusion(DiffusionModel):
     def __init__(
         self,
         use_ddim=False,
-        # various clipping
-        randn_clip_value=10,
-        clamp_action=None,
+        # modifying denoising schedule
         min_sampling_denoising_std=0.1,
         **kwargs,
     ):
         super().__init__(use_ddim=use_ddim, **kwargs)
         assert not self.use_ddim, "RWR does not support DDIM"
-
-        # For each denoising step, we clip sampled randn (from standard deviation) such that the sampled action is not too far away from mean
-        self.randn_clip_value = randn_clip_value
-
-        # Action clamp range
-        self.clamp_action = clamp_action
 
         # Minimum std used in denoising process when sampling action - helps exploration
         self.min_sampling_denoising_std = min_sampling_denoising_std
@@ -47,6 +39,7 @@ class RWRDiffusion(DiffusionModel):
         rewards,
         t,
     ):
+        """reward-weighted"""
         device = x_start.device
 
         # Forward process
@@ -68,46 +61,13 @@ class RWRDiffusion(DiffusionModel):
     # ---------- Sampling ----------#
 
     # override
-    def p_mean_var(
-        self,
-        x,
-        t,
-        cond,
-    ):
-        noise = self.network(x, t, cond=cond)
-
-        # Predict x_0
-        if self.predict_epsilon:
-            """
-            x₀ = √ 1\α̅ₜ xₜ - √ 1\α̅ₜ-1 ε
-            """
-            x_recon = (
-                extract(self.sqrt_recip_alphas_cumprod, t, x.shape) * x
-                - extract(self.sqrt_recipm1_alphas_cumprod, t, x.shape) * noise
-            )
-        else:  # directly predicting x₀
-            x_recon = noise
-        if self.denoised_clip_value is not None:
-            x_recon.clamp_(-self.denoised_clip_value, self.denoised_clip_value)
-
-        # Get mu
-        """
-        μₜ = β̃ₜ √ α̅ₜ₋₁/(1-α̅ₜ)x₀ + √ αₜ (1-α̅ₜ₋₁)/(1-α̅ₜ)xₜ
-        """
-        mu = (
-            extract(self.ddpm_mu_coef1, t, x.shape) * x_recon
-            + extract(self.ddpm_mu_coef2, t, x.shape) * x
-        )
-        logvar = extract(self.ddpm_logvar_clipped, t, x.shape)
-        return mu, logvar
-
-    # override
     @torch.no_grad()
     def forward(
         self,
         cond,
         deterministic=False,
     ):
+        """Modifying denoising schedule"""
         device = self.betas.device
         B = len(cond["state"])
 
@@ -126,7 +86,7 @@ class RWRDiffusion(DiffusionModel):
             # Determine noise level
             if deterministic and t == 0:
                 std = torch.zeros_like(std)
-            elif deterministic:  # For DDPM, sample with noise
+            elif deterministic:
                 std = torch.clip(std, min=1e-3)
             else:
                 std = torch.clip(std, min=self.min_sampling_denoising_std)
@@ -136,6 +96,8 @@ class RWRDiffusion(DiffusionModel):
             x = mean + std * noise
 
             # clamp action at final step
-            if self.clamp_action is not None and i == len(t_all) - 1:
-                x = torch.clamp(x, -self.clamp_action, self.clamp_action)
+            if self.final_action_clip_value is not None and i == len(t_all) - 1:
+                x = torch.clamp(
+                    x, -self.final_action_clip_value, self.final_action_clip_value
+                )
         return x

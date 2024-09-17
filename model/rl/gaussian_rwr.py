@@ -16,16 +16,12 @@ class RWR_Gaussian(GaussianModel):
     def __init__(
         self,
         actor,
-        randn_clip_value=10,
         **kwargs,
     ):
         super().__init__(network=actor, **kwargs)
 
         # assign actor
         self.actor = self.network
-
-        # Clip sampled randn (from standard deviation) such that the sampled action is not too far away from mean
-        self.randn_clip_value = randn_clip_value
 
     # override
     def loss(self, actions, obs, reward_weights):
@@ -44,6 +40,5 @@ class RWR_Gaussian(GaussianModel):
         actions = super().forward(
             cond=cond,
             deterministic=deterministic,
-            randn_clip_value=self.randn_clip_value,
         )
         return actions

@@ -18,6 +18,7 @@ class GaussianModel(torch.nn.Module):
         horizon_steps,
         network_path=None,
         device="cuda:0",
+        randn_clip_value=10,
     ):
         super().__init__()
         self.device = device
@@ -35,6 +36,9 @@ class GaussianModel(torch.nn.Module):
             f"Number of network parameters: {sum(p.numel() for p in self.parameters())}"
         )
         self.horizon_steps = horizon_steps
+
+        # Clip sampled randn (from standard deviation) such that the sampled action is not too far away from mean
+        self.randn_clip_value = randn_clip_value
 
     def loss(
         self,
@@ -75,7 +79,6 @@ class GaussianModel(torch.nn.Module):
         self,
         cond,
         deterministic=False,
-        randn_clip_value=10,
         network_override=None,
     ):
         B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
@@ -87,7 +90,7 @@ class GaussianModel(torch.nn.Module):
         )
         sampled_action = dist.sample()
         sampled_action.clamp_(
-            dist.loc - randn_clip_value * dist.scale,
-            dist.loc + randn_clip_value * dist.scale,
+            dist.loc - self.randn_clip_value * dist.scale,
+            dist.loc + self.randn_clip_value * dist.scale,
         )
         return sampled_action.view(B, T, -1)

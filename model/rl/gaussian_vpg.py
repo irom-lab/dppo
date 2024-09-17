@@ -15,11 +15,9 @@ class VPG_Gaussian(GaussianModel):
         self,
         actor,
         critic,
-        randn_clip_value=10,
         **kwargs,
     ):
         super().__init__(network=actor, **kwargs)
-        self.randn_clip_value = randn_clip_value
 
         # Value function for obs - simple MLP
         self.critic = critic.to(self.device)
@@ -44,7 +42,6 @@ class VPG_Gaussian(GaussianModel):
         return super().forward(
             cond=cond,
             deterministic=deterministic,
-            randn_clip_value=self.randn_clip_value,
             network_override=self.actor if use_base_policy else None,
         )
 

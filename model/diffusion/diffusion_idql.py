@@ -104,6 +104,7 @@ class IDQLDiffusion(RWRDiffusion):
         cond,
         t,
     ):
+        """not reward-weighted, same as diffusion.py"""
         device = x_start.device
 
         # Forward process
