@@ -36,6 +36,7 @@ class MLP(nn.Module):
         out_activation_type="Identity",
         use_layernorm=False,
         use_spectralnorm=False,
+        use_layernorm_final=False,
         verbose=False,
     ):
         super(MLP, self).__init__()
@@ -54,7 +55,7 @@ class MLP(nn.Module):
             linear_layer = nn.Linear(i_dim, o_dim)
             if use_spectralnorm:
                 linear_layer = spectral_norm(linear_layer)
-            if idx == num_layer - 1:
+            if idx == num_layer - 1 and not use_layernorm_final:
                 module = nn.Sequential(
                     OrderedDict(
                         [

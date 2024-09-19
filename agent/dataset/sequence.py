@@ -15,6 +15,7 @@ import random
 log = logging.getLogger(__name__)
 
 Batch = namedtuple("Batch", "actions conditions")
+Transition = namedtuple("Transition", "actions conditions rewards dones")
 
 
 class StitchedSequenceDataset(torch.utils.data.Dataset):
@@ -87,7 +88,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         """
         start, num_before_start = self.indices[idx]
         end = start + self.horizon_steps
-        states = self.states[(start - num_before_start) : end]
+        states = self.states[(start - num_before_start) : start + 1]
         actions = self.actions[start:end]
         states = torch.stack(
             [
@@ -135,3 +136,118 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.indices)
+
+
+class StitchedTransitionDataset(StitchedSequenceDataset):
+    """
+    Extends StitchedSequenceDataset to include rewards and dones.
+    """
+
+    def __init__(
+        self,
+        dataset_path,
+        horizon_steps=64,
+        cond_steps=1,
+        img_cond_steps=1,
+        max_n_episodes=10000,
+        use_img=False,
+        device="cuda:0",
+        clip_to_eps=True,
+        eps=1e-5,
+        use_obs_diff_done=True,
+    ):
+        super().__init__(
+            dataset_path,
+            horizon_steps,
+            cond_steps,
+            img_cond_steps,
+            max_n_episodes,
+            use_img,
+            device,
+        )
+
+        if clip_to_eps:
+            lim = 1 - eps
+            self.actions = torch.clip(self.actions, -lim, lim)
+
+        # Load dataset to device specified (additional processing for rewards and dones)
+        if dataset_path.endswith(".npz"):
+            dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
+        elif dataset_path.endswith(".pkl"):
+            with open(dataset_path, "rb") as f:
+                dataset = pickle.load(f)
+        else:
+            raise ValueError(f"Unsupported file format: {dataset_path}")
+        traj_lengths = dataset["traj_lengths"][:max_n_episodes]  # 1-D array
+        total_num_steps = np.sum(traj_lengths)
+
+        self.rewards = (
+            torch.from_numpy(dataset["rewards"][:total_num_steps]).float().to(device)
+        )  # (total_num_steps, action_dim)
+        log.info(f"Rewards shape/type: {self.rewards.shape, self.rewards.dtype}")
+
+        # set the last done of each trajectory to 1
+        self.dones = torch.zeros_like(self.rewards)
+        cumulative_traj_length = np.cumsum(traj_lengths)
+        for i, traj_length in enumerate(cumulative_traj_length):
+            self.dones[traj_length - 1] = 1
+        log.info(f"Dones shape/type: {self.dones.shape, self.dones.dtype}")
+
+        # Compute the difference between states by rolling and taking the norm
+        # in the last dimension. We set any transition with difference above the threshold to done.
+        if use_obs_diff_done:
+            diff_states = torch.roll(self.states, shifts=-1, dims=0) - self.states
+            diff_states = torch.linalg.norm(diff_states, dim=-1)
+            diff_ub = diff_states.mean() + 3 * diff_states.std()
+            self.dones[diff_states > diff_ub] = 1.0
+
+    def __getitem__(self, idx):
+        # Sample a transition that includes rewards and dones.
+        # We take the last reward and done for the action chunk as the reward and done for the transition.
+        start, num_before_start = self.indices[idx]
+        end = start + self.horizon_steps
+        states = self.states[(start - num_before_start) : start + 1]
+        actions = self.actions[start:end]
+        rewards = self.rewards[start:end][-1:]
+        dones = self.dones[start:end][-1:]
+
+        # Note: for self.horizon_steps > 1, we need to include the action chunk in the environment dynamics.
+        # The next state is the state at the end of the action chunk. Therefore, when we index,
+        # we need to check whether idx is within self.horizon_steps of the end of the dataset.
+        if idx < len(self.indices) - self.horizon_steps:
+            # the states after we apply the action chunk
+            next_states = self.states[
+                (start - num_before_start + self.horizon_steps) : start
+                + 1
+                + self.horizon_steps
+            ]
+        else:
+            # prevents indexing error, but ignored since done=True
+            next_states = torch.zeros_like(states)
+
+        states = torch.stack(
+            [
+                states[max(num_before_start - t, 0)]
+                for t in reversed(range(self.cond_steps))
+            ]
+        )  # more recent is at the end
+
+        next_states = torch.stack(
+            [
+                next_states[max(num_before_start - t, 0)]
+                for t in reversed(range(self.cond_steps))
+            ]
+        )  # more recent is at the end
+
+        conditions = {"state": states, "next_state": next_states}
+        if self.use_img:
+            images = self.images[(start - num_before_start) : end]
+            images = torch.stack(
+                [
+                    images[max(num_before_start - t, 0)]
+                    for t in reversed(range(self.img_cond_steps))
+                ]
+            )
+            conditions["rgb"] = images
+        batch = Transition(actions, conditions, rewards, dones)
+        return batch
