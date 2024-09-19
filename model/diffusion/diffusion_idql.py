@@ -139,7 +139,6 @@ class IDQLDiffusion(RWRDiffusion):
         cond_shape_repeat_dims = tuple(1 for _ in cond["state"].shape)
         B, T, D = cond["state"].shape
         S = num_sample
-        cond_repeat = cond["state"][None].repeat(num_sample, *cond_shape_repeat_dims)
         cond_repeat = cond_repeat.view(-1, T, D)  # [B*S, T, D]
 
         # for eval, use less noisy samples --- there is still DDPM noise, but final action uses small min_sampling_std

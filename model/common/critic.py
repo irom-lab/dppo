@@ -70,6 +70,7 @@ class CriticObsAct(torch.nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self.double_q = double_q
         mlp_dims = [cond_dim + action_dim * action_steps] + mlp_dims + [1]
         if residual_tyle:
             model = ResidualMLP
