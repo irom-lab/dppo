@@ -9,6 +9,7 @@ import einops
 import copy
 
 import torch.nn.functional as F
+from util.network import soft_update
 
 log = logging.getLogger(__name__)
 
@@ -18,12 +19,6 @@ from model.diffusion.diffusion_rwr import RWRDiffusion
 def expectile_loss(diff, expectile=0.8):
     weight = torch.where(diff > 0, expectile, (1 - expectile))
     return weight * (diff**2)
-
-
-def soft_update(target, source, tau):
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
 
 class IDQLDiffusion(RWRDiffusion):
 
