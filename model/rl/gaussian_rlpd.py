@@ -69,8 +69,8 @@ class RLPD_Gaussian(GaussianModel):
         q2_ind = critic_ind[1]
 
         with torch.no_grad():
-            target_q1 = self.target_networks[q1_ind]
-            target_q2 = self.target_networks[q2_ind]    
+            target_q1 = self.target_networks[0] #self.target_networks[q1_ind]
+            target_q2 = self.target_networks[1] #self.target_networks[q2_ind]    
 
 
             # get next Q-function
@@ -98,7 +98,7 @@ class RLPD_Gaussian(GaussianModel):
             target_q = rewards + gamma * next_q * mask  # (B,)
 
             # add entropy term to the target 
-            target_q = target_q + gamma * alpha * next_logprobs
+            target_q = target_q - gamma * alpha * next_logprobs
 
         # loop over all critic networks and compute value estimate
         current_q = []
@@ -107,7 +107,6 @@ class RLPD_Gaussian(GaussianModel):
             current_q.append(current_q_i)
         current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
         loss_critic = torch.mean((current_q - target_q.unsqueeze(-1)) ** 2)
-
         return loss_critic
     
     def loss_actor(self, obs, alpha):
@@ -123,6 +122,7 @@ class RLPD_Gaussian(GaussianModel):
             current_q_i = self.critic_networks[i](obs, action)[0] - alpha * logprob
             current_q.append(current_q_i)
         current_q = torch.stack(current_q, dim=-1) # (B, n_critics)
+        current_q = torch.min(current_q, dim=-1).values
         
         loss_actor = -torch.mean(current_q)
 
@@ -130,12 +130,10 @@ class RLPD_Gaussian(GaussianModel):
     
 
     def update_target_critic(self, rho):
-        for i in range(self.n_critics):
-            soft_update(self.target_networks[i], self.critic_networks[i], rho)
+        soft_update(self.target_networks, self.critic_networks, rho)
 
     # ---------- Sampling ----------#
 
-    @torch.no_grad()
     def forward(
         self,
         cond,

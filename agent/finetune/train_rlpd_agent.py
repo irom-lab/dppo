@@ -48,7 +48,7 @@ class TrainRLPDAgent(TrainAgent):
 
         # Optimizer
         self.actor_optimizer = torch.optim.AdamW(
-            self.model.actor.parameters(),
+            self.model.network.parameters(),
             lr=cfg.train.actor_lr,
             weight_decay=cfg.train.actor_weight_decay,
         )
@@ -271,6 +271,12 @@ class TrainRLPDAgent(TrainAgent):
                     actions_b = torch.cat([actions_b_off, actions_b_on], dim=0)
                     rewards_b = torch.cat([rewards_b_off, rewards_b_on], dim=0)
                     dones_b = torch.cat([dones_b_off, dones_b_on], dim=0)
+                    # obs_b = obs_b_on
+                    # next_obs_b = next_obs_b_on
+                    # actions_b = actions_b_on
+                    # rewards_b = rewards_b_on
+                    # dones_b = dones_b_on
+
                 
 
                     # Update critic

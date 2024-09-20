@@ -64,12 +64,12 @@ train:
     freq: 1
     num: 0
   # RLPD specific
-  batch_size: 128
-  entropy_temperature: 0.001     # alpha in RLPD paper
+  batch_size: 512
+  entropy_temperature: 1.0    # alpha in RLPD paper
   target_ema_rate: 0.005         # rho in RLPD paper
-  scale_reward_factor: 0.01      # multiply reward by this amount for more stable value estimation
-  num_batch: 64                  # number of batches to sample for each learning update
-  buffer_size: 5000
+  scale_reward_factor: 1.0    # multiply reward by this amount for more stable value estimation
+  num_batch: 64           # number of batches to sample for each learning update
+  buffer_size: 1000000
 
 
 
