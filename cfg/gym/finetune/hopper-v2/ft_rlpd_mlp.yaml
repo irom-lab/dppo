@@ -21,7 +21,7 @@ horizon_steps: 1
 act_steps: 1
 
 env:
-  n_envs: 10
+  n_envs: 40
   name: ${env_name}
   max_episode_steps: 1000
   reset_at_iteration: False
@@ -44,7 +44,7 @@ wandb:
 train:
   n_train_itr: 1000
   n_critic_warmup_itr: 5
-  n_steps: 500
+  n_steps: 2000
   gamma: 0.99
   actor_lr: 1e-4
   actor_weight_decay: 0
@@ -95,7 +95,7 @@ model:
     use_layernorm: True
   horizon_steps: ${horizon_steps}
   device: ${device}
-  n_critics: 10            # Ensemble size for critic models
+  n_critics: 2            # Ensemble size for critic models
 
 train_dataset:
   _target_: agent.dataset.sequence.StitchedTransitionDataset

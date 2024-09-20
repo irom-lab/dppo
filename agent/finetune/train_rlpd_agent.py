@@ -229,7 +229,7 @@ class TrainRLPDAgent(TrainAgent):
                     obs_b_off = batch_offline.conditions["state"]
                     next_obs_b_off = batch_offline.conditions["next_state"]
                     actions_b_off = batch_offline.actions
-                    rewards_b_off = batch_offline.rewards
+                    rewards_b_off = batch_offline.rewards * self.scale_reward_factor
                     dones_b_off = batch_offline.dones
 
 
