@@ -62,7 +62,7 @@ class TrainRLPDAgent(TrainAgent):
             gamma=1.0,
         )
         self.critic_optimizer = torch.optim.AdamW(
-            self.model.critic.parameters(),
+            self.model.critic_networks.parameters(),
             lr=cfg.train.critic_lr,
             weight_decay=cfg.train.critic_weight_decay,
         )
@@ -76,7 +76,7 @@ class TrainRLPDAgent(TrainAgent):
             gamma=1.0,
         )
 
-        # Buffer size
+        # Entropy temperature
         self.entropy_temperature = cfg.train.entropy_temperature
 
         # Perturbation scale
@@ -84,6 +84,13 @@ class TrainRLPDAgent(TrainAgent):
 
         # Reward scale
         self.scale_reward_factor = cfg.train.scale_reward_factor
+
+        # Number of batches per learning update
+        self.num_batch = cfg.train.num_batch
+
+        # Buffer size
+        self.buffer_size = cfg.train.buffer_size
+
 
     def run(self):
 
@@ -205,10 +212,11 @@ class TrainRLPDAgent(TrainAgent):
 
             # Update models
             if not eval_mode:
-                num_batch = 0
 
+                num_batch = self.num_batch
+                
                 # Actor-critic learning
-                dataloader_iterator = iter(dataloader)
+                dataloader_iterator = iter(self.dataloader_train)
 
                 for _ in range(num_batch):
 
@@ -216,13 +224,13 @@ class TrainRLPDAgent(TrainAgent):
                     try:
                         batch_offline = next(dataloader_iterator)
                     except StopIteration:
-                        dataloader_iterator = iter(dataloader)
+                        dataloader_iterator = iter(self.dataloader_train)
                         batch_offline =  next(dataloader_iterator)
-                    obs_b_off = batch_offline["state"].to(self.device)
-                    next_obs_b_off = batch_offline["next_state"].to(self.device)
-                    actions_b_off = batch_offline["action"].to(self.device)
-                    rewards_b_off = batch_offline["reward"].to(self.device)
-                    dones_b_off = batch_offline["done"].to(self.device)
+                    obs_b_off = batch_offline.conditions["state"]
+                    next_obs_b_off = batch_offline.conditions["next_state"]
+                    actions_b_off = batch_offline.actions
+                    rewards_b_off = batch_offline.rewards
+                    dones_b_off = batch_offline.dones
 
 
                     # Sample batch from ONLINE buffer

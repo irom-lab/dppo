@@ -46,6 +46,7 @@ def main(cfg: OmegaConf):
 
     # For pre-training: download dataset if needed
     if "train_dataset_path" in cfg and not os.path.exists(cfg.train_dataset_path):
+        breakpoint()
         download_url = get_dataset_download_url(cfg)
         download_target = os.path.dirname(cfg.train_dataset_path)
         log.info(f"Downloading dataset from {download_url} to {download_target}")

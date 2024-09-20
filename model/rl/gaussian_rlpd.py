@@ -1,5 +1,5 @@
 """
-Advantage-weighted regression (AWR) for Gaussian policy.
+Reinforcement learning with prior data (RLPD) for Gaussian policy.
 
 """
 
@@ -68,41 +68,42 @@ class RLPD_Gaussian(GaussianModel):
         q1_ind = critic_ind[0]
         q2_ind = critic_ind[1]
 
-        target_q1 = self.target_networks[q1_ind]
-        target_q2 = self.target_networks[q2_ind]    
+        with torch.no_grad():
+            target_q1 = self.target_networks[q1_ind]
+            target_q2 = self.target_networks[q2_ind]    
 
 
-        # get next Q-function
-        next_actions = self.forward(
-            cond=next_obs,
-            deterministic=False,
-        )  # forward() has no gradient, which is desired here.
-        next_logprobs, _, _ = self.get_logprobs(
-            cond=next_obs,
-            actions=next_actions,
-        )  # needed for entropy 
-        next_q1 = target_q1(next_obs, next_actions)[0]
-        next_q2 = target_q2(next_obs, next_actions)[0]  
-        next_q = torch.min(next_q1, next_q2)
+            # get next Q-function
+            next_actions = self.forward(
+                cond=next_obs,
+                deterministic=False,
+            ) 
+            next_logprobs, _, _ = self.get_logprobs(
+                cond=next_obs,
+                actions=next_actions,
+            )  # needed for entropy 
+            next_q1 = target_q1(next_obs, next_actions)[0]
+            next_q2 = target_q2(next_obs, next_actions)[0]  
+            next_q = torch.min(next_q1, next_q2)
 
-        # terminal state mask
-        mask = 1 - dones
+            # terminal state mask
+            mask = 1 - dones
 
-        # flatten
-        rewards = rewards.view(-1)
-        next_q = next_q.view(-1)
-        mask = mask.view(-1)
+            # flatten
+            rewards = rewards.view(-1)
+            next_q = next_q.view(-1)
+            mask = mask.view(-1)
 
-        # target value
-        target_q = rewards + gamma * next_q * mask  # (B,)
+            # target value
+            target_q = rewards + gamma * next_q * mask  # (B,)
 
-        # add entropy term to the target 
-        target_q = target_q + gamma * alpha * next_logprobs
+            # add entropy term to the target 
+            target_q = target_q + gamma * alpha * next_logprobs
 
         # loop over all critic networks and compute value estimate
         current_q = []
         for i in range(self.n_critics):
-            current_q_i = self.critic_networks[i](obs, actions)
+            current_q_i = self.critic_networks[i](obs, actions)[0]
             current_q.append(current_q_i)
         current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
         loss_critic = torch.mean((current_q - target_q.unsqueeze(-1)) ** 2)
@@ -119,7 +120,7 @@ class RLPD_Gaussian(GaussianModel):
         # we subtract the entropy bonus here
         current_q = []
         for i in range(self.n_critics):
-            current_q_i = self.critic_networks[i](obs, action) - alpha * logprob
+            current_q_i = self.critic_networks[i](obs, action)[0] - alpha * logprob
             current_q.append(current_q_i)
         current_q = torch.stack(current_q, dim=-1) # (B, n_critics)
         

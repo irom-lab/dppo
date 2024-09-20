@@ -15,6 +15,7 @@ import random
 log = logging.getLogger(__name__)
 
 Batch = namedtuple("Batch", "actions conditions")
+Transition = namedtuple("Transition", "actions conditions rewards dones")
 
 
 class StitchedSequenceDataset(torch.utils.data.Dataset):
@@ -52,7 +53,8 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
 
         # Load dataset to device specified
         if dataset_path.endswith(".npz"):
-            dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
+            # Note: why allow_pickle=False? 
+            dataset = np.load(dataset_path, allow_pickle=True)  # only np arrays
         elif dataset_path.endswith(".pkl"):
             with open(dataset_path, "rb") as f:
                 dataset = pickle.load(f)
@@ -180,7 +182,7 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
 
         # Load dataset to device specified (additional processing for rewards and dones)
         if dataset_path.endswith(".npz"):
-            dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
+            dataset = np.load(dataset_path, allow_pickle=True)  # only np arrays
         elif dataset_path.endswith(".pkl"):
             with open(dataset_path, "rb") as f:
                 dataset = pickle.load(f)
@@ -208,8 +210,8 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         end = start + 1
         states = self.states[(start - num_before_start) : end]
         actions = self.actions[start:end]
-        rewards = self.rewards[start:end]
-        dones = self.dones[start:end]
+        rewards = self.reward[start:end]
+        dones = self.done[start:end]
         if idx < len(self.indices) - 1:
             next_states = self.states[(start - num_before_start + 1) : (end + 1)]
         else:
@@ -239,5 +241,5 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
                 ]
             )
             conditions["rgb"] = images
-        batch = Batch(actions, conditions, rewards, dones)
+        batch = Transition(actions, conditions, rewards, dones)
         return batch
