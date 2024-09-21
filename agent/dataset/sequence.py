@@ -53,8 +53,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
 
         # Load dataset to device specified
         if dataset_path.endswith(".npz"):
-            # Note: why allow_pickle=False?
-            dataset = np.load(dataset_path, allow_pickle=True)  # only np arrays
+            dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
         elif dataset_path.endswith(".pkl"):
             with open(dataset_path, "rb") as f:
                 dataset = pickle.load(f)
@@ -89,7 +88,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         """
         start, num_before_start = self.indices[idx]
         end = start + self.horizon_steps
-        states = self.states[(start - num_before_start) : end]
+        states = self.states[(start - num_before_start) : start + 1]
         actions = self.actions[start:end]
         states = torch.stack(
             [
@@ -125,21 +124,6 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
             cur_traj_index += traj_length
         return indices
 
-    def make_indices(self, traj_lengths, horizon_steps):
-        """
-        makes indices for sampling from dataset;
-        each index maps to a datapoint, also save the number of steps before it within the same trajectory
-        """
-        indices = []
-        cur_traj_index = 0
-        for traj_length in traj_lengths:
-            max_start = cur_traj_index + traj_length - horizon_steps + 1
-            indices += [
-                (i, i - cur_traj_index) for i in range(cur_traj_index, max_start)
-            ]
-            cur_traj_index += traj_length
-        return indices
-
     def set_train_val_split(self, train_split):
         """
         Not doing validation right now
@@ -156,7 +140,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
 
 class StitchedTransitionDataset(StitchedSequenceDataset):
     """
-    Extends StitchedSequenceDataset to include next states and rewards for computing TD targets.
+    Extends StitchedSequenceDataset to include rewards and dones.
     """
 
     def __init__(
@@ -181,7 +165,7 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
 
         # Load dataset to device specified (additional processing for rewards and dones)
         if dataset_path.endswith(".npz"):
-            dataset = np.load(dataset_path, allow_pickle=True)  # only np arrays
+            dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
         elif dataset_path.endswith(".pkl"):
             with open(dataset_path, "rb") as f:
                 dataset = pickle.load(f)
@@ -195,27 +179,29 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         )  # (total_num_steps, action_dim)
         log.info(f"Rewards shape/type: {self.reward.shape, self.reward.dtype}")
 
-        self.done = torch.zeros_like(self.reward)
         # set the last done of each trajectory to 1
+        self.done = torch.zeros_like(self.reward)
         cumulative_traj_length = np.cumsum(traj_lengths)
         for i, traj_length in enumerate(cumulative_traj_length):
-            self.done[traj_length - 1] = 1  # todo: check this
+            self.done[traj_length - 1] = 1
         log.info(f"Dones shape/type: {self.done.shape, self.done.dtype}")
 
     def __getitem__(self, idx):
-        # unlike StitchedSequenceDataset, we only sample a single transition
+        # Sample a transition that includes rewards and dones.
+        # We take the last reward and done for the action chunk as the reward and done for the transition.
         start, num_before_start = self.indices[idx]
-        end = start + 1
-        states = self.states[(start - num_before_start) : end]
+        end = start + self.horizon_steps
+        states = self.states[(start - num_before_start) : start + 1]
         actions = self.actions[start:end]
-        rewards = self.reward[start:end]
-        dones = self.done[start:end]
-        if idx < len(self.indices) - 1:
-            next_states = self.states[(start - num_before_start + 1) : (end + 1)]
+        rewards = self.reward[start:end][-1:]
+        dones = self.done[start:end][-1:]
+        if idx < len(self.indices) - self.horizon_steps:
+            next_states = self.states[
+                (start - num_before_start) : start + self.horizon_steps
+            ]
         else:
-            next_states = torch.zeros_like(
-                states
-            )  # prevents indexing error, but ignored since done=True
+            # prevents indexing error, but ignored since done=True
+            next_states = torch.zeros_like(states)
 
         states = torch.stack(
             [

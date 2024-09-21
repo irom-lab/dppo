@@ -9,7 +9,7 @@ name: ${env_name}_rlpd_mlp_ta${horizon_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
 normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
-train_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
 
 seed: 42
 device: cuda:0
@@ -72,10 +72,8 @@ train:
   entropy_temperature: 1.0    # alpha in RLPD paper
   target_ema_rate: 0.005         # rho in RLPD paper
   scale_reward_factor: 1.0    # multiply reward by this amount for more stable value estimation
-  num_batch: 64          # number of batches to sample for each learning update
+  replay_ratio: 64          # number of batches to sample for each learning update
   buffer_size: 1000000
-
-
 
 model:
   _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
@@ -101,9 +99,9 @@ model:
   device: ${device}
   n_critics: 2            # Ensemble size for critic models
 
-train_dataset:
+offline_dataset:
   _target_: agent.dataset.sequence.StitchedTransitionDataset
-  dataset_path: ${train_dataset_path}
+  dataset_path: ${offline_dataset_path}
   horizon_steps: ${horizon_steps}
   cond_steps: ${cond_steps}
   device: ${device}

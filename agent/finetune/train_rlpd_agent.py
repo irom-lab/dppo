@@ -1,13 +1,7 @@
 """
-Diffusion Q-Learning (DQL)
+Reinforcement Learning with Prior Data (RLPD) agent training script.
 
-Learns a critic Q-function and backprops the expected Q-value to train the actor
-
-pi = argmin L_d(\theta) - \alpha * E[Q(s, a)]
-L_d is demonstration loss for regularization
-
-Do not support pixel input right now.
-
+Does not support image observations right now. 
 """
 
 import os
@@ -30,13 +24,13 @@ class TrainRLPDAgent(TrainAgent):
         super().__init__(cfg)
 
         # Build dataset
-        self.dataset_train = hydra.utils.instantiate(cfg.train_dataset)
-        self.dataloader_train = torch.utils.data.DataLoader(
-            self.dataset_train,
+        self.dataset_offline = hydra.utils.instantiate(cfg.offline_dataset)
+        self.dataloader_offline = torch.utils.data.DataLoader(
+            self.dataset_offline,
             batch_size=self.batch_size // 2,
-            num_workers=4 if self.dataset_train.device == "cpu" else 0,
+            num_workers=4 if self.dataset_offline.device == "cpu" else 0,
             shuffle=True,
-            pin_memory=True if self.dataset_train.device == "cpu" else False,
+            pin_memory=True if self.dataset_offline.device == "cpu" else False,
         )
 
         # note the discount factor gamma here is applied to reward every act_steps, instead of every env step
@@ -85,7 +79,7 @@ class TrainRLPDAgent(TrainAgent):
         self.scale_reward_factor = cfg.train.scale_reward_factor
 
         # Number of batches per learning update
-        self.num_batch = cfg.train.num_batch
+        self.replay_ratio = cfg.train.replay_ratio
 
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
@@ -208,17 +202,19 @@ class TrainRLPDAgent(TrainAgent):
 
             # Update models
             if not eval_mode:
-                num_batch = self.num_batch
+                num_batch = int(
+                    self.n_steps * self.n_envs / self.batch_size * self.replay_ratio
+                )
 
                 # Actor-critic learning
-                dataloader_iterator = iter(self.dataloader_train)
+                dataloader_iterator = iter(self.dataloader_offline)
 
                 for _ in range(num_batch):
                     # Sample batch from OFFLINE buffer
                     try:
                         batch_offline = next(dataloader_iterator)
                     except StopIteration:
-                        dataloader_iterator = iter(self.dataloader_train)
+                        dataloader_iterator = iter(self.dataloader_offline)
                         batch_offline = next(dataloader_iterator)
                     obs_b_off = batch_offline.conditions["state"]
                     next_obs_b_off = batch_offline.conditions["next_state"]
@@ -264,11 +260,6 @@ class TrainRLPDAgent(TrainAgent):
                     actions_b = torch.cat([actions_b_off, actions_b_on], dim=0)
                     rewards_b = torch.cat([rewards_b_off, rewards_b_on], dim=0)
                     dones_b = torch.cat([dones_b_off, dones_b_on], dim=0)
-                    # obs_b = obs_b_on
-                    # next_obs_b = next_obs_b_on
-                    # actions_b = actions_b_on
-                    # rewards_b = rewards_b_on
-                    # dones_b = dones_b_on
 
                     # Update critic
                     loss_critic = self.model.loss_critic(

@@ -26,34 +26,28 @@ class RLPD_Gaussian(GaussianModel):
     ):
         super().__init__(network=actor, **kwargs)
 
-        # initialize critic networks
-        self.critic_networks = []
-        for i in range(n_critics):
-            critic_copy = deepcopy(critic)
-            critic_copy = critic_copy.to(self.device)
-            self.critic_networks.append(critic_copy)
-        self.critic_networks = nn.ModuleList(self.critic_networks)
-
-        # initialize target networks
-        self.target_networks = []
-        for i in range(n_critics):
-            critic_copy = deepcopy(critic)
-            critic_copy = critic_copy.to(self.device)
-            self.target_networks.append(critic_copy)
-        self.target_networks = nn.ModuleList(self.target_networks)
-
         # Save a copy of original actor
         self.actor = deepcopy(actor)
         for param in self.actor.parameters():
             param.requires_grad = False
 
-        self.n_critics = n_critics
+        # initialize critic networks
+        self.critic_networks = [
+            deepcopy(critic).to(self.device) for _ in range(n_critics)
+        ]
+        self.critic_networks = nn.ModuleList(self.critic_networks)
+
+        # initialize target networks
+        self.target_networks = [
+            deepcopy(critic).to(self.device) for _ in range(n_critics)
+        ]
+        self.target_networks = nn.ModuleList(self.target_networks)
 
     def get_random_indices(self, sz=None, num_ind=2):
         # get num_ind random indices from a set of size sz (used for getting critic targets)
 
         if sz is None:
-            sz = self.n_critics
+            sz = len(self.critic_networks)
 
         perm = torch.randperm(sz)
         ind = perm[:num_ind].to(self.device)
@@ -98,10 +92,7 @@ class RLPD_Gaussian(GaussianModel):
             target_q = target_q - gamma * alpha * next_logprobs
 
         # loop over all critic networks and compute value estimate
-        current_q = []
-        for i in range(self.n_critics):
-            current_q_i = self.critic_networks[i](obs, actions)[0]
-            current_q.append(current_q_i)
+        current_q = [critic(obs, actions)[0] for critic in self.critic_networks]
         current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
         loss_critic = torch.mean((current_q - target_q.unsqueeze(-1)) ** 2)
         return loss_critic
@@ -113,14 +104,12 @@ class RLPD_Gaussian(GaussianModel):
 
         # loop over all critic networks and compute value estimate
         # we subtract the entropy bonus here
-        current_q = []
-        for i in range(self.n_critics):
-            current_q_i = self.critic_networks[i](obs, action)[0] - alpha * logprob
-            current_q.append(current_q_i)
+        current_q = [
+            critic(obs, action)[0] - alpha * logprob for critic in self.critic_networks
+        ]
         current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
-        current_q = torch.min(current_q, dim=-1).values
 
-        loss_actor = -torch.mean(current_q)
+        loss_actor = -torch.mean(current_q)  # mean over all critics and samples
 
         return loss_actor
 
