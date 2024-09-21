@@ -53,7 +53,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
 
         # Load dataset to device specified
         if dataset_path.endswith(".npz"):
-            # Note: why allow_pickle=False? 
+            # Note: why allow_pickle=False?
             dataset = np.load(dataset_path, allow_pickle=True)  # only np arrays
         elif dataset_path.endswith(".pkl"):
             with open(dataset_path, "rb") as f:
@@ -124,7 +124,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
             ]
             cur_traj_index += traj_length
         return indices
-    
+
     def make_indices(self, traj_lengths, horizon_steps):
         """
         makes indices for sampling from dataset;
@@ -139,7 +139,6 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
             ]
             cur_traj_index += traj_length
         return indices
-
 
     def set_train_val_split(self, train_split):
         """
@@ -156,9 +155,9 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
 
 
 class StitchedTransitionDataset(StitchedSequenceDataset):
-    '''
+    """
     Extends StitchedSequenceDataset to include next states and rewards for computing TD targets.
-    '''
+    """
 
     def __init__(
         self,
@@ -191,7 +190,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         traj_lengths = dataset["traj_lengths"][:max_n_episodes]  # 1-D array
         total_num_steps = np.sum(traj_lengths)
 
-
         self.reward = (
             torch.from_numpy(dataset["rewards"][:total_num_steps]).float().to(device)
         )  # (total_num_steps, action_dim)
@@ -201,7 +199,7 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         # set the last done of each trajectory to 1
         cumulative_traj_length = np.cumsum(traj_lengths)
         for i, traj_length in enumerate(cumulative_traj_length):
-            self.done[traj_length - 1] = 1 # todo: check this
+            self.done[traj_length - 1] = 1  # todo: check this
         log.info(f"Dones shape/type: {self.done.shape, self.done.dtype}")
 
     def __getitem__(self, idx):
@@ -215,7 +213,9 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         if idx < len(self.indices) - 1:
             next_states = self.states[(start - num_before_start + 1) : (end + 1)]
         else:
-            next_states = torch.zeros_like(states) # prevents indexing error, but ignored since done=True
+            next_states = torch.zeros_like(
+                states
+            )  # prevents indexing error, but ignored since done=True
 
         states = torch.stack(
             [

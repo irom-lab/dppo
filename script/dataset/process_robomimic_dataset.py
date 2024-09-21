@@ -306,8 +306,17 @@ def make_dataset(
     num_out_train = len(out_train["traj_lengths"])
     num_out_val = len(out_val["traj_lengths"])
     for key in new_keys:
-        out_train[key] = np.concatenate([out_train[key][i, :out_train["traj_lengths"][i]] for i in range(num_out_train)], 0)
-        out_val[key] = np.concatenate([out_val[key][i, :out_val["traj_lengths"][i]] for i in range(num_out_val)], 0)
+        out_train[key] = np.concatenate(
+            [
+                out_train[key][i, : out_train["traj_lengths"][i]]
+                for i in range(num_out_train)
+            ],
+            0,
+        )
+        out_val[key] = np.concatenate(
+            [out_val[key][i, : out_val["traj_lengths"][i]] for i in range(num_out_val)],
+            0,
+        )
 
     # Save to np file
     save_train_path = os.path.join(save_dir, save_name_prefix + "train.npz")

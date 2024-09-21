@@ -17,7 +17,6 @@ log = logging.getLogger(__name__)
 
 
 class RLPD_Gaussian(GaussianModel):
-
     def __init__(
         self,
         actor,
@@ -62,7 +61,6 @@ class RLPD_Gaussian(GaussianModel):
         return ind
 
     def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma, alpha):
-
         # get random critic index
         critic_ind = self.get_random_indices()
         q1_ind = critic_ind[0]
@@ -70,19 +68,19 @@ class RLPD_Gaussian(GaussianModel):
 
         with torch.no_grad():
             target_q1 = self.target_networks[q1_ind]
-            target_q2 = self.target_networks[q2_ind]    
+            target_q2 = self.target_networks[q2_ind]
 
             # get next Q-function
             next_actions = self.forward(
                 cond=next_obs,
                 deterministic=False,
-            ) 
+            )
             next_logprobs, _, _ = self.get_logprobs(
                 cond=next_obs,
                 actions=next_actions,
-            )  # needed for entropy 
+            )  # needed for entropy
             next_q1 = target_q1(next_obs, next_actions)[0]
-            next_q2 = target_q2(next_obs, next_actions)[0]  
+            next_q2 = target_q2(next_obs, next_actions)[0]
             next_q = torch.min(next_q1, next_q2)
 
             # terminal state mask
@@ -96,7 +94,7 @@ class RLPD_Gaussian(GaussianModel):
             # target value
             target_q = rewards + gamma * next_q * mask  # (B,)
 
-            # add entropy term to the target 
+            # add entropy term to the target
             target_q = target_q - gamma * alpha * next_logprobs
 
         # loop over all critic networks and compute value estimate
@@ -107,9 +105,8 @@ class RLPD_Gaussian(GaussianModel):
         current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
         loss_critic = torch.mean((current_q - target_q.unsqueeze(-1)) ** 2)
         return loss_critic
-    
-    def loss_actor(self, obs, alpha):
 
+    def loss_actor(self, obs, alpha):
         # compute current action and entropy
         action = self.forward(obs, deterministic=False)
         logprob = self.get_logprobs(obs, action)[0]
@@ -120,13 +117,12 @@ class RLPD_Gaussian(GaussianModel):
         for i in range(self.n_critics):
             current_q_i = self.critic_networks[i](obs, action)[0] - alpha * logprob
             current_q.append(current_q_i)
-        current_q = torch.stack(current_q, dim=-1) # (B, n_critics)
+        current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
         current_q = torch.min(current_q, dim=-1).values
-        
+
         loss_actor = -torch.mean(current_q)
 
         return loss_actor
-    
 
     def update_target_critic(self, rho):
         soft_update(self.target_networks, self.critic_networks, rho)
@@ -144,7 +140,7 @@ class RLPD_Gaussian(GaussianModel):
             deterministic=deterministic,
             network_override=self.actor if use_base_policy else None,
         )
-    
+
     # ---------- RL training ----------#
 
     def get_logprobs(
@@ -164,4 +160,3 @@ class RLPD_Gaussian(GaussianModel):
         entropy = dist.entropy().mean()
         std = dist.scale.mean()
         return log_prob, entropy, std
-    

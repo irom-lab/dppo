@@ -26,7 +26,6 @@ from util.scheduler import CosineAnnealingWarmupRestarts
 
 
 class TrainRLPDAgent(TrainAgent):
-
     def __init__(self, cfg):
         super().__init__(cfg)
 
@@ -91,9 +90,7 @@ class TrainRLPDAgent(TrainAgent):
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
 
-
     def run(self):
-
         # make a FIFO replay buffer for obs, action, and reward
         obs_buffer = deque(maxlen=self.buffer_size)
         next_obs_buffer = deque(maxlen=self.buffer_size)
@@ -108,7 +105,6 @@ class TrainRLPDAgent(TrainAgent):
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
-
             # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
             options_venv = [{} for _ in range(self.n_envs)]
             if self.itr % self.render_freq == 0 and self.render_video:
@@ -128,9 +124,9 @@ class TrainRLPDAgent(TrainAgent):
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
             else:
-                firsts_trajs[0] = (
-                    done_venv  # if done at the end of last iteration, then the envs are just reset
-                )
+                firsts_trajs[
+                    0
+                ] = done_venv  # if done at the end of last iteration, then the envs are just reset
             reward_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
@@ -212,26 +208,23 @@ class TrainRLPDAgent(TrainAgent):
 
             # Update models
             if not eval_mode:
-
                 num_batch = self.num_batch
-                
+
                 # Actor-critic learning
                 dataloader_iterator = iter(self.dataloader_train)
 
                 for _ in range(num_batch):
-
                     # Sample batch from OFFLINE buffer
                     try:
                         batch_offline = next(dataloader_iterator)
                     except StopIteration:
                         dataloader_iterator = iter(self.dataloader_train)
-                        batch_offline =  next(dataloader_iterator)
+                        batch_offline = next(dataloader_iterator)
                     obs_b_off = batch_offline.conditions["state"]
                     next_obs_b_off = batch_offline.conditions["next_state"]
                     actions_b_off = batch_offline.actions
                     rewards_b_off = batch_offline.rewards * self.scale_reward_factor
                     dones_b_off = batch_offline.dones
-
 
                     # Sample batch from ONLINE buffer
                     inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
@@ -277,8 +270,6 @@ class TrainRLPDAgent(TrainAgent):
                     # rewards_b = rewards_b_on
                     # dones_b = dones_b_on
 
-                
-
                     # Update critic
                     loss_critic = self.model.loss_critic(
                         {"state": obs_b},
@@ -287,7 +278,7 @@ class TrainRLPDAgent(TrainAgent):
                         rewards_b,
                         dones_b,
                         self.gamma,
-                        self.entropy_temperature
+                        self.entropy_temperature,
                     )
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
@@ -299,8 +290,7 @@ class TrainRLPDAgent(TrainAgent):
                     # Update actor
                     self.actor_optimizer.zero_grad()
                     actor_loss = self.model.loss_actor(
-                        {"state": obs_b},
-                        self.entropy_temperature
+                        {"state": obs_b}, self.entropy_temperature
                     )
                     actor_loss.backward()
                     if self.itr >= self.n_critic_warmup_itr:
