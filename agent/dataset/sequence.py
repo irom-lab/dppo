@@ -201,7 +201,7 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         # set the last done of each trajectory to 1
         cumulative_traj_length = np.cumsum(traj_lengths)
         for i, traj_length in enumerate(cumulative_traj_length):
-            self.done[traj_length - 1] = 1
+            self.done[traj_length - 1] = 1 # todo: check this
         log.info(f"Dones shape/type: {self.done.shape, self.done.dtype}")
 
     def __getitem__(self, idx):

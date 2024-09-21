@@ -69,9 +69,8 @@ class RLPD_Gaussian(GaussianModel):
         q2_ind = critic_ind[1]
 
         with torch.no_grad():
-            target_q1 = self.target_networks[0] #self.target_networks[q1_ind]
-            target_q2 = self.target_networks[1] #self.target_networks[q2_ind]    
-
+            target_q1 = self.target_networks[q1_ind]
+            target_q2 = self.target_networks[q2_ind]    
 
             # get next Q-function
             next_actions = self.forward(
