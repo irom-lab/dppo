@@ -78,11 +78,17 @@ class TrainRLPDAgent(TrainAgent):
         # Reward scale
         self.scale_reward_factor = cfg.train.scale_reward_factor
 
-        # Number of batches per learning update
+        # Gradient steps per sample
         self.replay_ratio = cfg.train.replay_ratio
+
+        # Critic update frequency
+        self.critic_update_freq = cfg.train.critic_update_freq
 
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
+
+        self.n_val_steps = cfg.train.n_val_steps
+        self.n_explore_steps = cfg.train.n_explore_steps
 
     def run(self):
         # make a FIFO replay buffer for obs, action, and reward
@@ -98,7 +104,12 @@ class TrainRLPDAgent(TrainAgent):
         run_results = []
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
+        critic_update_counter = 0
+        env_step = 0
         while self.itr < self.n_train_itr:
+            if self.itr % 1000 == 0:
+                print(f"Processed training iteration {self.itr} of {self.n_train_itr}")
+
             # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
             options_venv = [{} for _ in range(self.n_envs)]
             if self.itr % self.render_freq == 0 and self.render_video:
@@ -109,24 +120,26 @@ class TrainRLPDAgent(TrainAgent):
 
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
+            n_steps = self.n_steps if not eval_mode else self.n_val_steps
+
             self.model.eval() if eval_mode else self.model.train()
             last_itr_eval = eval_mode
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
-            firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
+            firsts_trajs = np.zeros((n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
+                env_step = 0
             else:
-                firsts_trajs[
-                    0
-                ] = done_venv  # if done at the end of last iteration, then the envs are just reset
+                # if done at the end of last iteration, then the envs are just reset
+                firsts_trajs[0] = done_venv
             reward_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
-            for step in range(self.n_steps):
-                if step % 10 == 0:
-                    print(f"Processed step {step} of {self.n_steps}")
+            for step in range(n_steps):
+                if step % 100 == 0 and eval_mode:
+                    print(f"Processed step {step} of {n_steps}")
 
                 # Select action
                 with torch.no_grad():
@@ -149,6 +162,7 @@ class TrainRLPDAgent(TrainAgent):
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
+                env_step += self.act_steps
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
 
                 # add to buffer
@@ -198,13 +212,12 @@ class TrainRLPDAgent(TrainAgent):
                 avg_episode_reward = 0
                 avg_best_reward = 0
                 success_rate = 0
-                log.info("[WARNING] No episode completed within the iteration!")
+                # log.info("[WARNING] No episode completed within the iteration!")
 
             # Update models
-            if not eval_mode:
-                num_batch = int(
-                    self.n_steps * self.n_envs / self.batch_size * self.replay_ratio
-                )
+
+            if not eval_mode and self.itr > self.n_explore_steps:
+                num_batch = int(n_steps * self.n_envs * self.replay_ratio)
 
                 # Actor-critic learning
                 dataloader_iterator = iter(self.dataloader_offline)
@@ -274,6 +287,7 @@ class TrainRLPDAgent(TrainAgent):
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
                     self.critic_optimizer.step()
+                    critic_update_counter += 1
 
                     # Update target critic
                     self.model.update_target_critic(self.target_ema_rate)
@@ -284,12 +298,16 @@ class TrainRLPDAgent(TrainAgent):
                         {"state": obs_b}, self.entropy_temperature
                     )
                     actor_loss.backward()
-                    if self.itr >= self.n_critic_warmup_itr:
+                    if (
+                        self.itr >= self.n_critic_warmup_itr
+                        and critic_update_counter % self.critic_update_freq == 0
+                    ):
                         if self.max_grad_norm is not None:
                             torch.nn.utils.clip_grad_norm_(
                                 self.model.actor.parameters(), self.max_grad_norm
                             )
                         self.actor_optimizer.step()
+                        critic_update_counter = 0
                     loss = actor_loss
 
             # Update lr
@@ -306,7 +324,7 @@ class TrainRLPDAgent(TrainAgent):
                     "itr": self.itr,
                 }
             )
-            if self.itr % self.log_freq == 0:
+            if self.itr % self.log_freq == 0 and self.itr > self.n_explore_steps:
                 time = timer()
                 if eval_mode:
                     log.info(
