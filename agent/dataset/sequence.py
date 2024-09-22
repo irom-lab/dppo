@@ -195,10 +195,8 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         actions = self.actions[start:end]
         rewards = self.reward[start:end][-1:]
         dones = self.done[start:end][-1:]
-        if idx < len(self.indices) - self.horizon_steps:
-            next_states = self.states[
-                (start - num_before_start) : start + self.horizon_steps
-            ]
+        if idx < len(self.indices) - 1:
+            next_states = self.states[(start - num_before_start + 1) : start + 1 + 1]
         else:
             # prevents indexing error, but ignored since done=True
             next_states = torch.zeros_like(states)
