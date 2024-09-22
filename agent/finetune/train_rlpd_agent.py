@@ -156,7 +156,12 @@ class TrainRLPDAgent(TrainAgent):
                         .cpu()
                         .numpy()
                     )  # n_env x horizon x act
-                action_venv = samples[:, : self.act_steps]
+
+                # sample random action from action space if
+                if self.itr < self.n_explore_steps:
+                    action_venv = self.venv.action_space.sample()
+                else:
+                    action_venv = samples[:, : self.act_steps]
 
                 # Apply multi-step action
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
