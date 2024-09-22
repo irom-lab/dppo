@@ -69,9 +69,6 @@ class TrainRLPDAgent(TrainAgent):
             gamma=1.0,
         )
 
-        # Entropy temperature
-        self.entropy_temperature = cfg.train.entropy_temperature
-
         # Perturbation scale
         self.target_ema_rate = cfg.train.target_ema_rate
 
@@ -89,6 +86,19 @@ class TrainRLPDAgent(TrainAgent):
 
         self.n_val_steps = cfg.train.n_val_steps
         self.n_explore_steps = cfg.train.n_explore_steps
+
+        # Initialize temperature parameter for entropy
+        init_temperature = cfg.train.init_temperature
+        self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
+        self.log_alpha.requires_grad = True
+        # set target entropy to -|A|/2
+        self.target_entropy = cfg.train.target_entropy
+
+        self.log_alpha_optimizer = torch.optim.Adam(
+            [self.log_alpha],
+            lr=cfg.train.actor_lr,
+            weight_decay=cfg.train.actor_weight_decay,
+        )
 
     def run(self):
         # make a FIFO replay buffer for obs, action, and reward
@@ -278,6 +288,8 @@ class TrainRLPDAgent(TrainAgent):
                     rewards_b = torch.cat([rewards_b_off, rewards_b_on], dim=0)
                     dones_b = torch.cat([dones_b_off, dones_b_on], dim=0)
 
+                    entropy_temperature = self.log_alpha.exp()
+
                     # Update critic
                     loss_critic = self.model.loss_critic(
                         {"state": obs_b},
@@ -286,7 +298,7 @@ class TrainRLPDAgent(TrainAgent):
                         rewards_b,
                         dones_b,
                         self.gamma,
-                        self.entropy_temperature,
+                        entropy_temperature.detach(),
                     )
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
@@ -296,18 +308,31 @@ class TrainRLPDAgent(TrainAgent):
                     self.model.update_target_critic(self.target_ema_rate)
 
                 # Update actor
-                self.actor_optimizer.zero_grad()
                 actor_loss = self.model.loss_actor(
-                    {"state": obs_b}, self.entropy_temperature
+                    {"state": obs_b},
+                    entropy_temperature.detach(),
                 )
+                self.actor_optimizer.zero_grad()
                 actor_loss.backward()
+
                 if self.itr >= self.n_critic_warmup_itr:
                     if self.max_grad_norm is not None:
                         torch.nn.utils.clip_grad_norm_(
                             self.model.actor.parameters(), self.max_grad_norm
                         )
                     self.actor_optimizer.step()
+
                 loss = actor_loss
+
+                # Update temperature parameter
+                self.log_alpha_optimizer.zero_grad()
+                alpha_loss = self.model.loss_temperature(
+                    {"state": obs_b}, entropy_temperature, self.target_entropy
+                )
+                alpha_loss.backward()
+
+                if self.itr >= self.n_critic_warmup_itr:
+                    self.log_alpha_optimizer.step()
 
             # Update lr
             self.actor_lr_scheduler.step()

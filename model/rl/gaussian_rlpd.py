@@ -113,6 +113,15 @@ class RLPD_Gaussian(GaussianModel):
 
         return loss_actor
 
+    def loss_temperature(self, obs, alpha, target_entropy):
+        # compute current action and entropy
+        action = self.forward(obs, deterministic=False)
+        logprob = self.get_logprobs(obs, action)[0]
+
+        loss_alpha = -torch.mean(alpha * (logprob.detach() + target_entropy))
+
+        return loss_alpha
+
     def update_target_critic(self, rho):
         soft_update(self.target_networks, self.critic_networks, rho)
 

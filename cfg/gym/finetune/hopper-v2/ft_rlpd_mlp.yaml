@@ -66,14 +66,15 @@ train:
   log_freq: 100
   # RLPD specific
   batch_size: 256
-  entropy_temperature: 0   # alpha in RLPD paper
   target_ema_rate: 0.005         # rho in RLPD paper
   scale_reward_factor: 1   # multiply reward by this amount for more stable value estimation
   replay_ratio: 20        # number of batches to sample for each learning update
   critic_update_freq: 1 # utd_ratio in RLPD paper
   buffer_size: 1000000
   n_val_steps: 1000
-  n_explore_steps: 10000
+  n_explore_steps: 100
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
+  init_temperature: 1
 
 model:
   _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
