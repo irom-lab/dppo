@@ -114,7 +114,6 @@ class TrainRLPDAgent(TrainAgent):
         run_results = []
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
-        env_step = 0
         while self.itr < self.n_train_itr:
             if self.itr % 1000 == 0:
                 print(f"Processed training iteration {self.itr} of {self.n_train_itr}")
@@ -139,7 +138,6 @@ class TrainRLPDAgent(TrainAgent):
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
-                env_step = 0
             else:
                 # if done at the end of last iteration, then the envs are just reset
                 firsts_trajs[0] = done_venv
@@ -176,7 +174,6 @@ class TrainRLPDAgent(TrainAgent):
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
-                env_step += self.act_steps
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
 
                 # add to buffer
@@ -307,7 +304,7 @@ class TrainRLPDAgent(TrainAgent):
                     # Update target critic
                     self.model.update_target_critic(self.target_ema_rate)
 
-                # Update actor
+                # Update actor with the final batch
                 actor_loss = self.model.loss_actor(
                     {"state": obs_b},
                     entropy_temperature.detach(),
