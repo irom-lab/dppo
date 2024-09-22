@@ -72,7 +72,7 @@ train:
   critic_update_freq: 1 # utd_ratio in RLPD paper
   buffer_size: 1000000
   n_val_steps: 1000
-  n_explore_steps: 100
+  n_explore_steps: 10000
   target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
   init_temperature: 1
 
