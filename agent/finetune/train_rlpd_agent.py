@@ -104,7 +104,6 @@ class TrainRLPDAgent(TrainAgent):
         run_results = []
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
-        critic_update_counter = 0
         env_step = 0
         while self.itr < self.n_train_itr:
             if self.itr % 1000 == 0:
@@ -292,28 +291,23 @@ class TrainRLPDAgent(TrainAgent):
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
                     self.critic_optimizer.step()
-                    critic_update_counter += 1
 
                     # Update target critic
                     self.model.update_target_critic(self.target_ema_rate)
 
-                    # Update actor
-                    self.actor_optimizer.zero_grad()
-                    actor_loss = self.model.loss_actor(
-                        {"state": obs_b}, self.entropy_temperature
-                    )
-                    actor_loss.backward()
-                    if (
-                        self.itr >= self.n_critic_warmup_itr
-                        and critic_update_counter % self.critic_update_freq == 0
-                    ):
-                        if self.max_grad_norm is not None:
-                            torch.nn.utils.clip_grad_norm_(
-                                self.model.actor.parameters(), self.max_grad_norm
-                            )
-                        self.actor_optimizer.step()
-                        critic_update_counter = 0
-                    loss = actor_loss
+                # Update actor
+                self.actor_optimizer.zero_grad()
+                actor_loss = self.model.loss_actor(
+                    {"state": obs_b}, self.entropy_temperature
+                )
+                actor_loss.backward()
+                if self.itr >= self.n_critic_warmup_itr:
+                    if self.max_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.actor.parameters(), self.max_grad_norm
+                        )
+                    self.actor_optimizer.step()
+                loss = actor_loss
 
             # Update lr
             self.actor_lr_scheduler.step()
