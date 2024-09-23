@@ -152,6 +152,8 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         max_n_episodes=10000,
         use_img=False,
         device="cuda:0",
+        clip_to_eps=True,
+        eps=1e-5,
     ):
         super().__init__(
             dataset_path,
@@ -162,6 +164,10 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
             use_img,
             device,
         )
+
+        if clip_to_eps:
+            lim = 1 - eps
+            self.actions = torch.clip(self.actions, -lim, lim)
 
         # Load dataset to device specified (additional processing for rewards and dones)
         if dataset_path.endswith(".npz"):
@@ -174,17 +180,21 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         traj_lengths = dataset["traj_lengths"][:max_n_episodes]  # 1-D array
         total_num_steps = np.sum(traj_lengths)
 
-        self.reward = (
+        self.rewards = (
             torch.from_numpy(dataset["rewards"][:total_num_steps]).float().to(device)
         )  # (total_num_steps, action_dim)
-        log.info(f"Rewards shape/type: {self.reward.shape, self.reward.dtype}")
+        log.info(f"Rewards shape/type: {self.rewards.shape, self.rewards.dtype}")
 
         # set the last done of each trajectory to 1
-        self.done = torch.zeros_like(self.reward)
+        self.dones = torch.zeros_like(self.rewards)
         cumulative_traj_length = np.cumsum(traj_lengths)
         for i, traj_length in enumerate(cumulative_traj_length):
-            self.done[traj_length - 1] = 1
-        log.info(f"Dones shape/type: {self.done.shape, self.done.dtype}")
+            self.dones[traj_length - 1] = 1
+        log.info(f"Dones shape/type: {self.dones.shape, self.dones.dtype}")
+
+        for i in range(len(self.dones) - 1):
+            if np.linalg.norm(self.states[i + 1] - self.states[i]) > 1e-6:
+                self.dones[i] = 1.0
 
     def __getitem__(self, idx):
         # Sample a transition that includes rewards and dones.
@@ -193,10 +203,19 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         end = start + self.horizon_steps
         states = self.states[(start - num_before_start) : start + 1]
         actions = self.actions[start:end]
-        rewards = self.reward[start:end][-1:]
-        dones = self.done[start:end][-1:]
-        if idx < len(self.indices) - 1:
-            next_states = self.states[(start - num_before_start + 1) : start + 1 + 1]
+        rewards = self.rewards[start:end][-1:]
+        dones = self.dones[start:end][-1:]
+
+        # Note: for self.horizon_steps > 1, we need to include the action chunk in the environment dynamics.
+        # The next state is the state at the end of the action chunk. Therefore, when we index,
+        # we need to check whether idx is within self.horizon_steps of the end of the dataset.
+        if idx < len(self.indices) - self.horizon_steps:
+            # the states after we apply the action chunk
+            next_states = self.states[
+                (start - num_before_start + self.horizon_steps) : start
+                + 1
+                + self.horizon_steps
+            ]
         else:
             # prevents indexing error, but ignored since done=True
             next_states = torch.zeros_like(states)
