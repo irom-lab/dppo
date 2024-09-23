@@ -19,11 +19,6 @@ def expectile_loss(diff, expectile=0.8):
     return weight * (diff**2)
 
 
-def soft_update(target, source, tau):
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
-
 class QSMDiffusion(RWRDiffusion):
 
     def __init__(
@@ -104,4 +99,9 @@ class QSMDiffusion(RWRDiffusion):
         return loss_critic
 
     def update_target_critic(self, tau):
-        soft_update(self.target_q, self.critic_q, tau)
+        for target_param, source_param in zip(
+            self.target_q.parameters(), self.critic_q.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )

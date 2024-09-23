@@ -138,9 +138,9 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         return len(self.indices)
 
 
-class StitchedTransitionDataset(StitchedSequenceDataset):
+class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
     """
-    Extends StitchedSequenceDataset to include rewards and dones.
+    Extends StitchedSequenceDataset to include rewards and dones for Q learning
     """
 
     def __init__(
@@ -154,7 +154,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         device="cuda:0",
         clip_to_eps=True,
         eps=1e-5,
-        use_obs_diff_done=True,
     ):
         super().__init__(
             dataset_path,
@@ -165,7 +164,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
             use_img,
             device,
         )
-
         if clip_to_eps:
             lim = 1 - eps
             self.actions = torch.clip(self.actions, -lim, lim)
@@ -192,14 +190,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         for i, traj_length in enumerate(cumulative_traj_length):
             self.dones[traj_length - 1] = 1
         log.info(f"Dones shape/type: {self.dones.shape, self.dones.dtype}")
-
-        # Compute the difference between states by rolling and taking the norm
-        # in the last dimension. We set any transition with difference above the threshold to done.
-        if use_obs_diff_done:
-            diff_states = torch.roll(self.states, shifts=-1, dims=0) - self.states
-            diff_states = torch.linalg.norm(diff_states, dim=-1)
-            diff_ub = diff_states.mean() + 3 * diff_states.std()
-            self.dones[diff_states > diff_ub] = 1.0
 
     def __getitem__(self, idx):
         # Sample a transition that includes rewards and dones.

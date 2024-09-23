@@ -3,9 +3,9 @@ defaults:
 hydra:
   run:
     dir: ${logdir}
-_target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
+_target_: agent.finetune.train_sac_agent.TrainSACAgent
 
-name: ${env_name}_rlpd_mlp_ta${horizon_steps}
+name: ${env_name}_sac_mlp_ta${horizon_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
@@ -36,12 +36,11 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: rlpd-gym-${env_name}-finetune
+  project: sac-gym-${env_name}-finetune
   run: ${now:%H-%M-%S}_${name}
 
 train:
   n_train_itr: 1000000
-  n_critic_warmup_itr: 0
   n_steps: 1
   gamma: 0.99
   actor_lr: 3e-4
@@ -56,53 +55,43 @@ train:
     first_cycle_steps: 1000
     warmup_steps: 10
     min_lr: 3e-4
-  save_model_freq: 10000
-  val_freq: 1000
+  save_model_freq: 100000
+  val_freq: 10000
   render:
     freq: 1
     num: 0
   log_freq: 200
-  # RLPD specific
-  batch_size: 256
-  target_ema_rate: 0.005         # rho in RLPD paper
-  scale_reward_factor: 1.0      # multiply reward by this amount for more stable value estimation
-  replay_ratio: 20               # number of batches to sample for each learning update
+  # SAC specific
+  batch_size: 128
+  target_ema_rate: 0.005
+  scale_reward_factor: 0.1
+  critic_replay_ratio: 128
+  actor_replay_ratio: 64
   buffer_size: 1000000
-  n_val_steps: 10000
-  n_explore_steps: 5000 # used in RLPD locomotion
+  n_eval_episode: 10
+  n_explore_steps: 5000
   target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
-  init_temperature: 1
+  init_temperature: 0.2
 
 model:
-  _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
-  randn_clip_value: 3
-  n_critics: 10            # Ensemble size for critic models
+  _target_: model.rl.gaussian_sac.SAC_Gaussian
+  randn_clip_value: 10
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
     activation_type: ReLU
-    residual_style: False
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
     std_max: 7.3891
     std_min: 2.061e-9
     # fixed_std: 0.1
-  critic:
+  critic: # no layernorm
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]
     activation_type: ReLU
-    residual_style: False
-    use_layernorm: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     action_dim: ${action_dim}
     action_steps: ${act_steps}
   horizon_steps: ${horizon_steps}
-  device: ${device}
-
-offline_dataset:
-  _target_: agent.dataset.sequence.StitchedTransitionDataset
-  dataset_path: ${offline_dataset_path}
-  horizon_steps: ${horizon_steps}
-  cond_steps: ${cond_steps}
   device: ${device}
