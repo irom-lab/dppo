@@ -198,7 +198,6 @@ class Gaussian_MLP(nn.Module):
         super().__init__()
         self.transition_dim = transition_dim
         self.horizon_steps = horizon_steps
-        self.learn_std_override = learn_std_override  # treat var as std
         input_dim = cond_dim
         output_dim = transition_dim * horizon_steps
         if residual_style:

@@ -70,7 +70,7 @@ train:
   buffer_size: 1000000
   n_val_steps: 10000
   n_explore_steps: 5000 # used in RLPD locomotion
-  target_entropy:   ${eval:'- ${action_dim} * ${act_steps} / 2'}
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
   init_temperature: 1
 
 model:
