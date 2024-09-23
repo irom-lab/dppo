@@ -78,9 +78,6 @@ class TrainRLPDAgent(TrainAgent):
         # Gradient steps per sample
         self.replay_ratio = cfg.train.replay_ratio
 
-        # Critic update frequency
-        self.critic_update_freq = cfg.train.critic_update_freq
-
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
 

@@ -67,7 +67,6 @@ train:
   target_ema_rate: 0.005         # rho in RLPD paper
   scale_reward_factor: 0.01   # multiply reward by this amount for more stable value estimation
   replay_ratio: 20        # number of batches to sample for each learning update
-  critic_update_freq: 1 # utd_ratio in RLPD paper
   buffer_size: 1000000
   n_val_steps: 10000
   n_explore_steps: 5000 # used in RLPD locomotion
@@ -81,20 +80,20 @@ model:
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
-    activation_type: Mish
+    activation_type: ReLU
     residual_style: False
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObsAct
-    action_dim: ${action_dim}
-    action_steps: ${act_steps}
-    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     mlp_dims: [256, 256]
-    activation_type: Mish
+    activation_type: ReLU
     residual_style: False
     use_layernorm: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    action_dim: ${action_dim}
+    action_steps: ${act_steps}
   horizon_steps: ${horizon_steps}
   device: ${device}
 
