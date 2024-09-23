@@ -65,12 +65,12 @@ train:
   # RLPD specific
   batch_size: 256
   target_ema_rate: 0.005         # rho in RLPD paper
-  scale_reward_factor: 0.01   # multiply reward by this amount for more stable value estimation
-  replay_ratio: 20        # number of batches to sample for each learning update
+  scale_reward_factor: 1.0      # multiply reward by this amount for more stable value estimation
+  replay_ratio: 20               # number of batches to sample for each learning update
   buffer_size: 1000000
   n_val_steps: 10000
   n_explore_steps: 5000 # used in RLPD locomotion
-  target_entropy:  ${eval:'- ${action_dim} * ${act_steps} / 2'}
+  target_entropy:   ${eval:'- ${action_dim} * ${act_steps} / 2'}
   init_temperature: 1
 
 model:
@@ -85,6 +85,9 @@ model:
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
+    std_max: 7.3891
+    std_min: 2.061e-9
+    # fixed_std: 0.1
   critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]

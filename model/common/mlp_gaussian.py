@@ -97,7 +97,9 @@ class Gaussian_VisionMLP(nn.Module):
             )
         elif learn_fixed_std:  # initialize to fixed_std
             self.logvar = torch.nn.Parameter(
-                torch.log(torch.tensor([fixed_std**2 for _ in range(transition_dim)])),
+                torch.log(
+                    torch.tensor([fixed_std**2 for _ in range(transition_dim)])
+                ),
                 requires_grad=True,
             )
         self.logvar_min = torch.nn.Parameter(
@@ -179,7 +181,6 @@ class Gaussian_VisionMLP(nn.Module):
 
 
 class Gaussian_MLP(nn.Module):
-
     def __init__(
         self,
         transition_dim,
@@ -191,12 +192,14 @@ class Gaussian_MLP(nn.Module):
         use_layernorm=False,
         fixed_std=None,
         learn_fixed_std=False,
+        learn_std_override=False,
         std_min=0.01,
         std_max=1,
     ):
         super().__init__()
         self.transition_dim = transition_dim
         self.horizon_steps = horizon_steps
+        self.learn_std_override = learn_std_override  # treat var as std
         input_dim = cond_dim
         output_dim = transition_dim * horizon_steps
         if residual_style:
@@ -227,7 +230,9 @@ class Gaussian_MLP(nn.Module):
                 use_layernorm=use_layernorm,
             )
             self.logvar = torch.nn.Parameter(
-                torch.log(torch.tensor([fixed_std**2 for _ in range(transition_dim)])),
+                torch.log(
+                    torch.tensor([fixed_std**2 for _ in range(transition_dim)])
+                ),
                 requires_grad=True,
             )
         self.logvar_min = torch.nn.Parameter(
