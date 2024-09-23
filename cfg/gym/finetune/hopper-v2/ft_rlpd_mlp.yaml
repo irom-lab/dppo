@@ -5,7 +5,7 @@ hydra:
     dir: ${logdir}
 _target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
 
-name: ${env_name}_rlpd_mlp_ta${horizon_steps}_td${denoising_steps}
+name: ${env_name}_rlpd_mlp_ta${horizon_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
@@ -14,8 +14,6 @@ device: cuda:0
 env_name: hopper-medium-v2
 obs_dim: 11
 action_dim: 3
-transition_dim: ${action_dim}
-denoising_steps: 20
 cond_steps: 1
 horizon_steps: 1
 act_steps: 1
@@ -67,38 +65,38 @@ train:
   # RLPD specific
   batch_size: 256
   target_ema_rate: 0.005         # rho in RLPD paper
-  scale_reward_factor: 1   # multiply reward by this amount for more stable value estimation
+  scale_reward_factor: 0.01   # multiply reward by this amount for more stable value estimation
   replay_ratio: 20        # number of batches to sample for each learning update
   critic_update_freq: 1 # utd_ratio in RLPD paper
   buffer_size: 1000000
   n_val_steps: 10000
-  n_explore_steps: 10000
+  n_explore_steps: 5000 # used in RLPD locomotion
   target_entropy:  ${eval:'- ${action_dim} * ${act_steps} / 2'}
   init_temperature: 1
 
 model:
   _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
   randn_clip_value: 3
+  n_critics: 10            # Ensemble size for critic models
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
-    mlp_dims: [512, 512, 512]
-    activation_type: ReLU
-    residual_style: True
+    mlp_dims: [256, 256]
+    activation_type: Mish
+    residual_style: False
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    transition_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObsAct
     action_dim: ${action_dim}
     action_steps: ${act_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
-    mlp_dims: [256, 256, 256]
+    mlp_dims: [256, 256]
     activation_type: Mish
-    residual_style: True
+    residual_style: False
     use_layernorm: True
   horizon_steps: ${horizon_steps}
   device: ${device}
-  n_critics: 10            # Ensemble size for critic models
 
 offline_dataset:
   _target_: agent.dataset.sequence.StitchedTransitionDataset

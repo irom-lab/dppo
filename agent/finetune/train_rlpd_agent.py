@@ -107,7 +107,6 @@ class TrainRLPDAgent(TrainAgent):
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
         done_buffer = deque(maxlen=self.buffer_size)
-        first_buffer = deque(maxlen=self.buffer_size)
 
         # Start training loop
         timer = Timer()
@@ -116,7 +115,7 @@ class TrainRLPDAgent(TrainAgent):
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
             if self.itr % 1000 == 0:
-                print(f"Processed training iteration {self.itr} of {self.n_train_itr}")
+                print(f"Finished training iteration {self.itr} of {self.n_train_itr}")
 
             # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
             options_venv = [{} for _ in range(self.n_envs)]
@@ -129,7 +128,6 @@ class TrainRLPDAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = self.itr % self.val_freq == 0 and not self.force_train
             n_steps = self.n_steps if not eval_mode else self.n_val_steps
-
             self.model.eval() if eval_mode else self.model.train()
             last_itr_eval = eval_mode
 
@@ -145,8 +143,8 @@ class TrainRLPDAgent(TrainAgent):
 
             # Collect a set of trajectories from env
             for step in range(n_steps):
-                if step % 100 == 0 and eval_mode:
-                    print(f"Processed step {step} of {n_steps}")
+                # if step % 100 == 0 and eval_mode:
+                #     print(f"Processed step {step} of {n_steps}")
 
                 # Select action
                 with torch.no_grad():
@@ -183,8 +181,6 @@ class TrainRLPDAgent(TrainAgent):
                     action_buffer.append(action_venv[i])
                     reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
                     done_buffer.append(done_venv[i])
-                first_buffer.append(firsts_trajs[step])
-
                 firsts_trajs[step + 1] = done_venv
                 prev_obs_venv = obs_venv
 
@@ -226,13 +222,11 @@ class TrainRLPDAgent(TrainAgent):
                 # log.info("[WARNING] No episode completed within the iteration!")
 
             # Update models
-
             if not eval_mode and self.itr > self.n_explore_steps:
                 num_batch = int(n_steps * self.n_envs * self.replay_ratio)
 
                 # Actor-critic learning
                 dataloader_iterator = iter(self.dataloader_offline)
-
                 for _ in range(num_batch):
                     # Sample batch from OFFLINE buffer
                     try:
@@ -249,31 +243,31 @@ class TrainRLPDAgent(TrainAgent):
                     # Sample batch from ONLINE buffer
                     inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
                     obs_b_on = (
-                        torch.from_numpy(np.vstack([obs_buffer[i][None] for i in inds]))
+                        torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
                         .float()
                         .to(self.device)
                     )
                     next_obs_b_on = (
                         torch.from_numpy(
-                            np.vstack([next_obs_buffer[i][None] for i in inds])
+                            np.array([next_obs_buffer[i] for i in inds])
                         )
                         .float()
                         .to(self.device)
                     )
                     actions_b_on = (
                         torch.from_numpy(
-                            np.vstack([action_buffer[i][None] for i in inds])
+                            np.array([action_buffer[i] for i in inds])
                         )
                         .float()
                         .to(self.device)
                     )
                     rewards_b_on = (
-                        torch.from_numpy(np.vstack([reward_buffer[i] for i in inds]))
+                        torch.from_numpy(np.array([reward_buffer[i][None] for i in inds]))
                         .float()
                         .to(self.device)
                     )
                     dones_b_on = (
-                        torch.from_numpy(np.vstack([done_buffer[i] for i in inds]))
+                        torch.from_numpy(np.array([done_buffer[i][None] for i in inds]))
                         .float()
                         .to(self.device)
                     )
@@ -311,23 +305,22 @@ class TrainRLPDAgent(TrainAgent):
                 )
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
-
                 if self.itr >= self.n_critic_warmup_itr:
                     if self.max_grad_norm is not None:
                         torch.nn.utils.clip_grad_norm_(
                             self.model.actor.parameters(), self.max_grad_norm
                         )
                     self.actor_optimizer.step()
-
                 loss = actor_loss
 
                 # Update temperature parameter
                 self.log_alpha_optimizer.zero_grad()
                 alpha_loss = self.model.loss_temperature(
-                    {"state": obs_b}, entropy_temperature, self.target_entropy
+                    {"state": obs_b}, 
+                    entropy_temperature, 
+                    self.target_entropy,
                 )
                 alpha_loss.backward()
-
                 if self.itr >= self.n_critic_warmup_itr:
                     self.log_alpha_optimizer.step()
 
@@ -374,6 +367,7 @@ class TrainRLPDAgent(TrainAgent):
                             {
                                 "loss": loss,
                                 "loss - critic": loss_critic,
+                                "entropy coeff": entropy_temperature,
                                 "avg episode reward - train": avg_episode_reward,
                                 "num episode - train": num_episode_finished,
                             },
