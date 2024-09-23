@@ -103,7 +103,7 @@ model:
   n_critics: 2            # Ensemble size for critic models
 
 offline_dataset:
-  _target_: agent.dataset.sequence.StitchedTransitionDataset
+  _target_: agent.dataset.sequence.StitchedSequenceQLearningDataset
   dataset_path: ${offline_dataset_path}
   horizon_steps: ${horizon_steps}
   cond_steps: ${cond_steps}

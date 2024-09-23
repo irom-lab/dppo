@@ -72,9 +72,11 @@ class CriticObsAct(torch.nn.Module):
         activation_type="Mish",
         use_layernorm=False,
         residual_tyle=False,
+        double_q=True,
         **kwargs,
     ):
         super().__init__()
+        self.double_q = double_q
         mlp_dims = [cond_dim + action_dim * action_steps] + mlp_dims + [1]
         if residual_tyle:
             self.Q1 = ResidualMLP(
@@ -91,7 +93,8 @@ class CriticObsAct(torch.nn.Module):
                 use_layernorm=use_layernorm,
                 verbose=False,
             )
-        self.Q2 = copy.deepcopy(self.Q1)
+        if double_q:
+            self.Q2 = copy.deepcopy(self.Q1)
 
     def forward(self, cond: dict, action):
         """
@@ -108,9 +111,13 @@ class CriticObsAct(torch.nn.Module):
         action = action.view(B, -1)
 
         x = torch.cat((state, action), dim=-1)
-        q1 = self.Q1(x)
-        q2 = self.Q2(x)
-        return q1.squeeze(1), q2.squeeze(1)
+        if self.double_q:
+            q1 = self.Q1(x)
+            q2 = self.Q2(x)
+            return q1.squeeze(1), q2.squeeze(1)
+        else:
+            q1 = self.Q1(x)
+            return q1.squeeze(1)
 
 
 class ViTCritic(CriticObs):

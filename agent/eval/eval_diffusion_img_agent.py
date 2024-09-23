@@ -53,7 +53,7 @@ class EvalImgDiffusionAgent(EvalAgent):
                     key: torch.from_numpy(prev_obs_venv[key]).float().to(self.device)
                     for key in self.obs_dims
                 }  # batch each type of obs and put into dict
-                samples = self.model(cond=cond)
+                samples = self.model(cond=cond, deterministic=True)
                 output_venv = (
                     samples.trajectories.cpu().numpy()
                 )  # n_env x horizon x act

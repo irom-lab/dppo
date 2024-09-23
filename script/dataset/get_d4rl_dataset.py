@@ -21,17 +21,20 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
     )  # Interact with the environment to initialize it
     dataset = env.get_dataset()
 
+    # rename observations to states
+    dataset["states"] = dataset.pop("observations")
+
     logger.info("\n========== Basic Info ===========")
     logger.info(f"Keys in the dataset: {dataset.keys()}")
-    logger.info(f"Observation shape: {dataset['observations'].shape}")
+    logger.info(f"State shape: {dataset['states'].shape}")
     logger.info(f"Action shape: {dataset['actions'].shape}")
 
     terminal_indices = np.argwhere(dataset["terminals"])[:, 0]
     timeout_indices = np.argwhere(dataset["timeouts"])[:, 0]
     done_indices = np.sort(np.concatenate([terminal_indices, timeout_indices]))
 
-    obs_min = np.min(dataset["observations"], axis=0)
-    obs_max = np.max(dataset["observations"], axis=0)
+    obs_min = np.min(dataset["states"], axis=0)
+    obs_max = np.max(dataset["states"], axis=0)
     action_min = np.min(dataset["actions"], axis=0)
     action_max = np.max(dataset["actions"], axis=0)
 
@@ -59,15 +62,11 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
     train_indices = random.sample(range(num_traj), k=num_train)
 
     # Prepare data containers for train and validation sets
-    out_train = {"observations": [], "actions": [], "rewards": [], "traj_lengths": []}
+    out_train = {"states": [], "actions": [], "rewards": [], "traj_lengths": []}
     out_val = deepcopy(out_train)
-
     prev_index = 0
     train_episode_reward_all = []
     val_episode_reward_all = []
-
-    keys = ["observations", "actions", "rewards"]
-
     for i, cur_index in tqdm(enumerate(done_indices), total=len(done_indices)):
         if i in train_indices:
             out = out_train
@@ -78,13 +77,13 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
 
         # Get the trajectory length and slice
         traj_length = cur_index - prev_index + 1
-        trajectory = {key: dataset[key][prev_index : cur_index + 1] for key in keys}
+        trajectory = {key: dataset[key][prev_index : cur_index + 1] for key in ["states", "actions", "rewards"]}
 
         # Skip if there is no reward in the episode
         if np.sum(trajectory["rewards"]) > 0:
             # Scale observations and actions
             trajectory["states"] = (
-                2 * (trajectory["observations"] - obs_min) / (obs_max - obs_min + 1e-6)
+                2 * (trajectory["states"] - obs_min) / (obs_max - obs_min + 1e-6)
                 - 1
             )
             trajectory["actions"] = (
@@ -94,7 +93,7 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
                 - 1
             )
 
-            for key in keys:
+            for key in ["states", "actions", "rewards"]:
                 out[key].append(trajectory[key])
             out["traj_lengths"].append(traj_length)
             episode_reward_all.append(np.sum(trajectory["rewards"]))
@@ -103,17 +102,13 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
 
         prev_index = cur_index + 1
 
-    # Concatenate trajectories directly without padding
-    for key in keys:
+    # Concatenate trajectories
+    for key in ["states", "actions", "rewards"]:
         out_train[key] = np.concatenate(out_train[key], axis=0)
 
         # Only concatenate validation set if it exists
         if val_split > 0:
             out_val[key] = np.concatenate(out_val[key], axis=0)
-
-    # replace observations with states to match our naming convention
-    out_train["states"] = out_train.pop("observations")
-    out_val["states"] = out_val.pop("observations")
 
     # Save train dataset to npz files
     train_save_path = os.path.join(save_dir, save_name_prefix + "train.npz")
