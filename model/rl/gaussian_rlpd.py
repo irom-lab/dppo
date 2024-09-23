@@ -87,7 +87,7 @@ class RLPD_Gaussian(GaussianModel):
 
     def loss_actor(self, obs, alpha):
         # compute current action and entropy
-        action = self.forward(obs, deterministic=False)
+        action = self.forward(obs, deterministic=False, reparameterize=True)
         logprob = self.get_logprobs(obs, action)
 
         # loop over all critic networks and compute value estimate
@@ -102,7 +102,7 @@ class RLPD_Gaussian(GaussianModel):
 
     def loss_temperature(self, obs, alpha, target_entropy):
         # compute current action and entropy
-        action = self.forward(obs, deterministic=False)
+        action = self.forward(obs, deterministic=False, reparameterize=True)
         logprob = self.get_logprobs(obs, action)
 
         loss_alpha = -torch.mean(alpha * (logprob.detach() + target_entropy))
@@ -117,12 +117,12 @@ class RLPD_Gaussian(GaussianModel):
         self,
         cond,
         deterministic=False,
-        use_base_policy=False,
+        reparameterize=False,    # allow gradient
     ):
         return super().forward(
             cond=cond,
             deterministic=deterministic,
-            network_override=self.actor if use_base_policy else None,
+            reparameterize=reparameterize,
         )
 
     # ---------- RL training ----------#

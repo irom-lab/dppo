@@ -80,6 +80,7 @@ class GaussianModel(torch.nn.Module):
         cond,
         deterministic=False,
         network_override=None,
+        reparameterize=False,
     ):
         B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
         T = self.horizon_steps
@@ -88,7 +89,10 @@ class GaussianModel(torch.nn.Module):
             deterministic=deterministic,
             network_override=network_override,
         )
-        sampled_action = dist.sample()
+        if reparameterize:
+            sampled_action = dist.rsample()
+        else:
+            sampled_action = dist.sample()
         sampled_action.clamp_(
             dist.loc - self.randn_clip_value * dist.scale,
             dist.loc + self.randn_clip_value * dist.scale,
