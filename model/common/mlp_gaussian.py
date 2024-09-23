@@ -192,7 +192,6 @@ class Gaussian_MLP(nn.Module):
         use_layernorm=False,
         fixed_std=None,
         learn_fixed_std=False,
-        learn_std_override=False,
         std_min=0.01,
         std_max=1,
     ):
