@@ -193,14 +193,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
             self.dones[traj_length - 1] = 1
         log.info(f"Dones shape/type: {self.dones.shape, self.dones.dtype}")
 
-        # Compute the difference between states by rolling and taking the norm
-        # in the last dimension. We set any transition with difference above the threshold to done.
-        if use_obs_diff_done:
-            diff_states = torch.roll(self.states, shifts=-1, dims=0) - self.states
-            diff_states = torch.linalg.norm(diff_states, dim=-1)
-            diff_ub = diff_states.mean() + 3 * diff_states.std()
-            self.dones[diff_states > diff_ub] = 1.0
-
     def __getitem__(self, idx):
         # Sample a transition that includes rewards and dones.
         # We take the last reward and done for the action chunk as the reward and done for the transition.

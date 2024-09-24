@@ -66,17 +66,17 @@ train:
   batch_size: 256
   target_ema_rate: 0.005         # rho in RLPD paper
   scale_reward_factor: 1.0      # multiply reward by this amount for more stable value estimation
-  replay_ratio: 20               # number of batches to sample for each learning update
+  replay_ratio: 10            # number of batches to sample for each learning update
   buffer_size: 1000000
   n_val_steps: 10000
   n_explore_steps: 5000 # used in RLPD locomotion
-  target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
-  init_temperature: 1
+  target_entropy:  ${eval:'- ${action_dim} * ${act_steps} / 2'}
+  init_temperature: 0.2
 
 model:
   _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
   randn_clip_value: 3
-  n_critics: 10            # Ensemble size for critic models
+  n_critics: 2            # Ensemble size for critic models
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
@@ -88,6 +88,7 @@ model:
     std_max: 7.3891
     std_min: 2.061e-9
     # fixed_std: 0.1
+    # learn_fixed_std: True
   critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]

@@ -213,7 +213,7 @@ class TrainSACAgent(TrainAgent):
                 num_batch = int(n_steps * self.n_envs * self.replay_ratio)
 
                 for _ in range(num_batch):
-                    inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
+                    inds = np.random.choice(len(obs_buffer), self.batch_size)
                     obs_b = (
                         torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
                         .float()
