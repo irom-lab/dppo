@@ -1,10 +1,9 @@
 """
-Reinforcement learning with prior data (RLPD) for Gaussian policy.
+Soft Actor Critic (SAC) with Gaussian policy.
 
 """
 
 import torch
-import torch.nn as nn
 import logging
 from copy import deepcopy
 
@@ -18,91 +17,55 @@ class SAC_Gaussian(GaussianModel):
         self,
         actor,
         critic,
-        n_critics,
         **kwargs,
     ):
         super().__init__(network=actor, **kwargs)
 
-        # initialize critic networks
-        self.critic_networks = [
-            deepcopy(critic).to(self.device) for _ in range(n_critics)
-        ]
-        self.critic_networks = nn.ModuleList(self.critic_networks)
+        # initialize doubel critic networks
+        self.critic = critic.to(self.device)
 
-        # initialize target networks
-        self.target_networks = [
-            deepcopy(critic).to(self.device) for _ in range(n_critics)
-        ]
-        self.target_networks = nn.ModuleList(self.target_networks)
-
-    def get_random_indices(self, sz=None, num_ind=2):
-        # get num_ind random indices from a set of size sz (used for getting critic targets)
-        if sz is None:
-            sz = len(self.critic_networks)
-        perm = torch.randperm(sz)
-        ind = perm[:num_ind].to(self.device)
-        return ind
+        # initialize double target networks
+        self.target_critic = deepcopy(self.critic).to(self.device)
 
     def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma, alpha):
-        # get random critic index
-        critic_ind = self.get_random_indices()
-        q1_ind = critic_ind[0]
-        q2_ind = critic_ind[1]
-
         with torch.no_grad():
-            # get next Q-function
-            next_actions = self.forward(
+            next_actions, next_logprobs = self.forward(
                 cond=next_obs,
                 deterministic=False,
+                get_logprob=True,
             )
-            next_logprobs = self.get_logprobs(
-                cond=next_obs,
-                actions=next_actions,
+            next_q1, next_q2 = self.target_critic(
+                next_obs,
+                next_actions,
             )
-            next_q1 = self.target_networks[q1_ind](next_obs, next_actions)[0]
-            next_q2 = self.target_networks[q2_ind](next_obs, next_actions)[0]
-            next_q = torch.min(next_q1, next_q2)
-
-            # terminal state mask
-            mask = 1 - dones
-
-            # flatten
-            rewards = rewards.view(-1)
-            next_q = next_q.view(-1)
-            mask = mask.view(-1)
+            next_q = torch.min(next_q1, next_q2) - alpha * next_logprobs
 
             # target value
-            target_q = rewards + gamma * next_q * mask  # (B,)
-
-            # add entropy term to the target
-            target_q = target_q - gamma * alpha * next_logprobs
-
-        # loop over all critic networks and compute value estimate
-        current_q = [critic(obs, actions)[0] for critic in self.critic_networks]
-        current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
-        loss_critic = torch.mean((current_q - target_q.unsqueeze(-1)) ** 2)
+            target_q = rewards + gamma * next_q * (1 - dones)
+        current_q1, current_q2 = self.critic(obs, actions)
+        loss_critic = torch.mean((current_q1 - target_q) ** 2) + torch.mean(
+            (current_q2 - target_q) ** 2
+        )
         return loss_critic
 
     def loss_actor(self, obs, alpha):
-        # compute current action and entropy
-        action = self.forward(obs, deterministic=False, reparameterize=True)
-        logprob = self.get_logprobs(obs, action)
-
-        # loop over all critic networks and compute value estimate
-        # we subtract the entropy bonus here
-        current_q = [
-            critic(obs, action)[0] - alpha * logprob for critic in self.critic_networks
-        ]
-        current_q = torch.stack(current_q, dim=-1)  # (B, n_critics)
-
-        loss_actor = -torch.mean(current_q)  # mean over all critics and samples
+        action, logprob = self.forward(
+            obs,
+            deterministic=False,
+            reparameterize=True,
+            get_logprob=True,
+        )
+        current_q1, current_q2 = self.critic(obs, action)
+        loss_actor = -torch.min(current_q1, current_q2).mean() + alpha * logprob.mean()
         return loss_actor
 
     def loss_temperature(self, obs, alpha, target_entropy):
-        # compute current action and entropy
-        action = self.forward(obs, deterministic=False, reparameterize=True)
-        logprob = self.get_logprobs(obs, action)
-
+        _, logprob = self.forward(
+            obs,
+            deterministic=False,
+            reparameterize=True,
+            get_logprob=True,
+        )
         loss_alpha = -torch.mean(alpha * (logprob.detach() + target_entropy))
         return loss_alpha
 
@@ -121,29 +84,12 @@ class SAC_Gaussian(GaussianModel):
         cond,
         deterministic=False,
         reparameterize=False,  # allow gradient
+        get_logprob=False,
     ):
         return super().forward(
             cond=cond,
             deterministic=deterministic,
             reparameterize=reparameterize,
+            get_logprob=get_logprob,
+            apply_squashing=True,
         )
-
-    # ---------- RL training ----------#
-
-    def get_logprobs(
-        self,
-        cond,
-        actions,
-        use_base_policy=False,
-    ):
-        B = len(actions)
-        dist = self.forward_train(
-            cond,
-            deterministic=False,
-            network_override=self.actor if use_base_policy else None,
-        )
-        log_prob = dist.log_prob(actions.view(B, -1))
-        log_prob = log_prob.mean(-1)
-        entropy = dist.entropy().mean()
-        std = dist.scale.mean()
-        return log_prob

@@ -120,7 +120,7 @@ class RLPD_Gaussian(GaussianModel):
         self,
         cond,
         deterministic=False,
-        reparameterize=False,    # allow gradient
+        reparameterize=False,  # allow gradient
     ):
         return super().forward(
             cond=cond,

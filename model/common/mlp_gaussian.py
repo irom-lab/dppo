@@ -97,9 +97,7 @@ class Gaussian_VisionMLP(nn.Module):
             )
         elif learn_fixed_std:  # initialize to fixed_std
             self.logvar = torch.nn.Parameter(
-                torch.log(
-                    torch.tensor([fixed_std**2 for _ in range(transition_dim)])
-                ),
+                torch.log(torch.tensor([fixed_std**2 for _ in range(transition_dim)])),
                 requires_grad=True,
             )
         self.logvar_min = torch.nn.Parameter(
@@ -205,6 +203,7 @@ class Gaussian_MLP(nn.Module):
         else:
             model = MLP
         if fixed_std is None:
+            # learning std
             self.mlp_base = model(
                 [input_dim] + mlp_dims,
                 activation_type=activation_type,
@@ -212,27 +211,30 @@ class Gaussian_MLP(nn.Module):
                 use_layernorm=use_layernorm,
                 use_layernorm_final=use_layernorm,
             )
-            self.mlp_logvar = MLP(
-                mlp_dims[-1:] + [output_dim],
-                out_activation_type="Identity",
-            )
             self.mlp_mean = MLP(
                 mlp_dims[-1:] + [output_dim],
                 out_activation_type="Identity",
             )
-        elif learn_fixed_std:  # initialize to fixed_std
+            self.mlp_logvar = MLP(
+                mlp_dims[-1:] + [output_dim],
+                out_activation_type="Identity",
+            )
+        else:
+            # no separate head for mean and std
             self.mlp_mean = model(
                 [input_dim] + mlp_dims + [output_dim],
                 activation_type=activation_type,
                 out_activation_type="Identity",
                 use_layernorm=use_layernorm,
             )
-            self.logvar = torch.nn.Parameter(
-                torch.log(
-                    torch.tensor([fixed_std**2 for _ in range(transition_dim)])
-                ),
-                requires_grad=True,
-            )
+            if learn_fixed_std:
+                # initialize to fixed_std
+                self.logvar = torch.nn.Parameter(
+                    torch.log(
+                        torch.tensor([fixed_std**2 for _ in range(transition_dim)])
+                    ),
+                    requires_grad=True,
+                )
         self.logvar_min = torch.nn.Parameter(
             torch.log(torch.tensor(std_min**2)), requires_grad=False
         )
@@ -269,6 +271,9 @@ class Gaussian_MLP(nn.Module):
             out_logvar = self.mlp_logvar(state).view(
                 B, self.horizon_steps * self.transition_dim
             )
-            out_logvar = torch.clamp(out_logvar, self.logvar_min, self.logvar_max)
+            out_logvar = torch.tanh(out_logvar)
+            out_logvar = self.logvar_min + 0.5 * (self.logvar_max - self.logvar_min) * (
+                out_logvar + 1
+            )  # put back to full range
             out_scale = torch.exp(0.5 * out_logvar)
         return out_mean, out_scale
