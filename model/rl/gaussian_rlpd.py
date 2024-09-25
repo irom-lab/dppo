@@ -9,8 +9,6 @@ import logging
 from copy import deepcopy
 
 from model.common.gaussian import GaussianModel
-from util.network import soft_update
-
 
 log = logging.getLogger(__name__)
 
@@ -108,8 +106,13 @@ class RLPD_Gaussian(GaussianModel):
         loss_alpha = -torch.mean(alpha * (logprob.detach() + target_entropy))
         return loss_alpha
 
-    def update_target_critic(self, rho):
-        soft_update(self.target_networks, self.critic_networks, rho)
+    def update_target_critic(self, tau):
+        for target_param, source_param in zip(
+            self.target_networks.parameters(), self.critic_networks.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )
 
     # ---------- Sampling ----------#
 

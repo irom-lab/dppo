@@ -9,7 +9,6 @@ import einops
 import copy
 
 import torch.nn.functional as F
-from util.network import soft_update
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +18,7 @@ from model.diffusion.diffusion_rwr import RWRDiffusion
 def expectile_loss(diff, expectile=0.8):
     weight = torch.where(diff > 0, expectile, (1 - expectile))
     return weight * (diff**2)
+
 
 class IDQLDiffusion(RWRDiffusion):
 
@@ -90,7 +90,12 @@ class IDQLDiffusion(RWRDiffusion):
         return q_loss
 
     def update_target_critic(self, tau):
-        soft_update(self.target_q, self.critic_q, tau)
+        for target_param, source_param in zip(
+            self.target_q.parameters(), self.critic_q.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )
 
     # override
     def p_losses(
