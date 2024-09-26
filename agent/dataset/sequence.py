@@ -154,7 +154,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
         device="cuda:0",
         clip_to_eps=True,
         eps=1e-5,
-        use_obs_diff_done=True,
     ):
         super().__init__(
             dataset_path,
@@ -165,7 +164,6 @@ class StitchedTransitionDataset(StitchedSequenceDataset):
             use_img,
             device,
         )
-
         if clip_to_eps:
             lim = 1 - eps
             self.actions = torch.clip(self.actions, -lim, lim)
