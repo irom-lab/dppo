@@ -160,13 +160,14 @@ class TrainSACAgent(TrainAgent):
                 )
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
 
-                # add to buffer
-                for i in range(self.n_envs):
-                    obs_buffer.append(prev_obs_venv["state"][i])
-                    next_obs_buffer.append(obs_venv["state"][i])
-                    action_buffer.append(action_venv[i])
-                    reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
-                    done_buffer.append(done_venv[i])
+                # add to buffer in train mode
+                if not eval_mode:
+                    for i in range(self.n_envs):
+                        obs_buffer.append(prev_obs_venv["state"][i])
+                        next_obs_buffer.append(obs_venv["state"][i])
+                        action_buffer.append(action_venv[i])
+                        reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
+                        done_buffer.append(done_venv[i])
                 firsts_trajs = np.vstack(
                     (firsts_trajs, done_venv)
                 )  # offset by one step
@@ -243,9 +244,9 @@ class TrainSACAgent(TrainAgent):
                     .float()
                     .to(self.device)
                 )
-                entropy_temperature = self.log_alpha.exp()
 
                 # Update critic
+                entropy_temperature = self.log_alpha.exp()
                 loss_critic = self.model.loss_critic(
                     {"state": obs_b},
                     {"state": next_obs_b},
@@ -275,12 +276,12 @@ class TrainSACAgent(TrainAgent):
 
                     # Update temperature parameter
                     self.log_alpha_optimizer.zero_grad()
-                    alpha_loss = self.model.loss_temperature(
+                    loss_alpha = self.model.loss_temperature(
                         {"state": obs_b},
                         entropy_temperature,
                         self.target_entropy,
                     )
-                    alpha_loss.backward()
+                    loss_alpha.backward()
                     self.log_alpha_optimizer.step()
 
             # Update lr
