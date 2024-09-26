@@ -258,7 +258,7 @@ class Gaussian_MLP(nn.Module):
         out_mean = self.mlp_mean(state)
         out_mean = torch.tanh(out_mean).view(
             B, self.horizon_steps * self.transition_dim
-        )  # tanh squashing in [-1, 1]
+        )  # [-1, 1]
 
         if self.learn_fixed_std:
             out_logvar = torch.clamp(self.logvar, self.logvar_min, self.logvar_max)

@@ -77,7 +77,7 @@ class SAC_Gaussian(GaussianModel):
                 target_param.data * (1.0 - tau) + source_param.data * tau
             )
 
-    # ---------- sampling ----------#
+    # ---------- Sampling ----------#
 
     def forward(
         self,
