@@ -50,7 +50,7 @@ class EvalDiffusionAgent(EvalAgent):
                     .float()
                     .to(self.device)
                 }
-                samples = self.model(cond=cond)
+                samples = self.model(cond=cond, deterministic=True)
                 output_venv = (
                     samples.trajectories.cpu().numpy()
                 )  # n_env x horizon x act
