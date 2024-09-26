@@ -80,6 +80,9 @@ class GaussianModel(torch.nn.Module):
         cond,
         deterministic=False,
         network_override=None,
+        reparameterize=False,
+        get_logprob=False,
+        apply_squashing=False,
     ):
         B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
         T = self.horizon_steps
@@ -88,9 +91,27 @@ class GaussianModel(torch.nn.Module):
             deterministic=deterministic,
             network_override=network_override,
         )
-        sampled_action = dist.sample()
+        if reparameterize:
+            sampled_action = dist.rsample()
+        else:
+            sampled_action = dist.sample()
         sampled_action.clamp_(
             dist.loc - self.randn_clip_value * dist.scale,
             dist.loc + self.randn_clip_value * dist.scale,
         )
-        return sampled_action.view(B, T, -1)
+
+        if get_logprob:
+            log_prob = dist.log_prob(sampled_action)
+
+            # Right now we only apply squashing for SAC/RLPD, but not PPO
+            if apply_squashing:
+                sampled_action_squashed = torch.tanh(sampled_action)
+                log_prob -= torch.log(1 - sampled_action_squashed.pow(2) + 1e-6)
+                log_prob = log_prob.sum(1, keepdim=False)
+                return sampled_action_squashed.view(B, T, -1), log_prob
+            else:
+                return sampled_action.view(B, T, -1), log_prob
+        else:
+            if apply_squashing:
+                sampled_action = torch.tanh(sampled_action)
+            return sampled_action.view(B, T, -1)
