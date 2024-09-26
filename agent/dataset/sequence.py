@@ -138,9 +138,9 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         return len(self.indices)
 
 
-class StitchedTransitionDataset(StitchedSequenceDataset):
+class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
     """
-    Extends StitchedSequenceDataset to include rewards and dones.
+    Extends StitchedSequenceDataset to include rewards and dones for Q learning
     """
 
     def __init__(
