@@ -15,7 +15,6 @@ from collections import deque
 log = logging.getLogger(__name__)
 from util.timer import Timer
 from agent.finetune.train_agent import TrainAgent
-from util.scheduler import CosineAnnealingWarmupRestarts
 
 
 class TrainSACAgent(TrainAgent):
@@ -26,33 +25,13 @@ class TrainSACAgent(TrainAgent):
         self.gamma = cfg.train.gamma
 
         # Optimizer
-        self.actor_optimizer = torch.optim.AdamW(
+        self.actor_optimizer = torch.optim.Adam(
             self.model.network.parameters(),
             lr=cfg.train.actor_lr,
-            weight_decay=cfg.train.actor_weight_decay,
         )
-        self.actor_lr_scheduler = CosineAnnealingWarmupRestarts(
-            self.actor_optimizer,
-            first_cycle_steps=cfg.train.actor_lr_scheduler.first_cycle_steps,
-            cycle_mult=1.0,
-            max_lr=cfg.train.actor_lr,
-            min_lr=cfg.train.actor_lr_scheduler.min_lr,
-            warmup_steps=cfg.train.actor_lr_scheduler.warmup_steps,
-            gamma=1.0,
-        )
-        self.critic_optimizer = torch.optim.AdamW(
+        self.critic_optimizer = torch.optim.Adam(
             self.model.critic.parameters(),
             lr=cfg.train.critic_lr,
-            weight_decay=cfg.train.critic_weight_decay,
-        )
-        self.critic_lr_scheduler = CosineAnnealingWarmupRestarts(
-            self.critic_optimizer,
-            first_cycle_steps=cfg.train.critic_lr_scheduler.first_cycle_steps,
-            cycle_mult=1.0,
-            max_lr=cfg.train.critic_lr,
-            min_lr=cfg.train.critic_lr_scheduler.min_lr,
-            warmup_steps=cfg.train.critic_lr_scheduler.warmup_steps,
-            gamma=1.0,
         )
 
         # Perturbation scale
@@ -62,8 +41,12 @@ class TrainSACAgent(TrainAgent):
         self.scale_reward_factor = cfg.train.scale_reward_factor
 
         # Actor/critic update frequency - assume single env
-        self.critic_update_freq = int(cfg.train.batch_size / cfg.train.critic_replay_ratio)
-        self.actor_update_freq = int(cfg.train.batch_size / cfg.train.actor_replay_ratio)
+        self.critic_update_freq = int(
+            cfg.train.batch_size / cfg.train.critic_replay_ratio
+        )
+        self.actor_update_freq = int(
+            cfg.train.batch_size / cfg.train.actor_replay_ratio
+        )
 
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
@@ -78,7 +61,6 @@ class TrainSACAgent(TrainAgent):
         init_temperature = cfg.train.init_temperature
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
         self.log_alpha.requires_grad = True
-        # set target entropy to -|A|/2
         self.target_entropy = cfg.train.target_entropy
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha],
@@ -91,7 +73,7 @@ class TrainSACAgent(TrainAgent):
         next_obs_buffer = deque(maxlen=self.buffer_size)
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
-        done_buffer = deque(maxlen=self.buffer_size)
+        terminated_buffer = deque(maxlen=self.buffer_size)
 
         # Start training loop
         timer = Timer()
@@ -159,18 +141,21 @@ class TrainSACAgent(TrainAgent):
                     action_venv
                 )
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
+                firsts_trajs = np.vstack((firsts_trajs, done_venv))
+                terminated_venv = done_venv.copy()
 
                 # add to buffer in train mode
                 if not eval_mode:
                     for i in range(self.n_envs):
                         obs_buffer.append(prev_obs_venv["state"][i])
-                        next_obs_buffer.append(obs_venv["state"][i])
+                        if "final_obs" in info_venv[i]:  # truncated
+                            next_obs_buffer.append(info_venv[i]["final_obs"]["state"])
+                            terminated_venv[i] = False
+                        else:  # first obs in new episode
+                            next_obs_buffer.append(obs_venv["state"][i])
                         action_buffer.append(action_venv[i])
                         reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
-                        done_buffer.append(done_venv[i])
-                firsts_trajs = np.vstack(
-                    (firsts_trajs, done_venv)
-                )  # offset by one step
+                        terminated_buffer.append(terminated_venv[i])
                 prev_obs_venv = obs_venv
 
                 # check if enough eval episodes are done
@@ -215,10 +200,12 @@ class TrainSACAgent(TrainAgent):
                 success_rate = 0
 
             # Update models
-            if not eval_mode and self.itr > self.n_explore_steps and self.itr % self.critic_update_freq == 0:
-                inds = np.random.choice(
-                    len(obs_buffer), self.batch_size, replace=False
-                )
+            if (
+                not eval_mode
+                and self.itr > self.n_explore_steps
+                and self.itr % self.critic_update_freq == 0
+            ):
+                inds = np.random.choice(len(obs_buffer), self.batch_size, replace=False)
                 obs_b = (
                     torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
                     .float()
@@ -239,22 +226,22 @@ class TrainSACAgent(TrainAgent):
                     .float()
                     .to(self.device)
                 )
-                dones_b = (
-                    torch.from_numpy(np.array([done_buffer[i] for i in inds]))
+                terminated_b = (
+                    torch.from_numpy(np.array([terminated_buffer[i] for i in inds]))
                     .float()
                     .to(self.device)
                 )
 
                 # Update critic
-                entropy_temperature = self.log_alpha.exp()
+                alpha = self.log_alpha.exp().item()
                 loss_critic = self.model.loss_critic(
                     {"state": obs_b},
                     {"state": next_obs_b},
                     actions_b,
                     rewards_b,
-                    dones_b,
+                    terminated_b,
                     self.gamma,
-                    entropy_temperature.detach(),
+                    alpha,
                 )
                 self.critic_optimizer.zero_grad()
                 loss_critic.backward()
@@ -266,27 +253,24 @@ class TrainSACAgent(TrainAgent):
                 # Delay update actor
                 loss_actor = 0
                 if self.itr % self.actor_update_freq == 0:
-                    loss_actor = self.model.loss_actor(
-                        {"state": obs_b},
-                        entropy_temperature.detach(),
-                    )
-                    self.actor_optimizer.zero_grad()
-                    loss_actor.backward()
-                    self.actor_optimizer.step()
+                    for _ in range(2):
+                        loss_actor = self.model.loss_actor(
+                            {"state": obs_b},
+                            alpha,
+                        )
+                        self.actor_optimizer.zero_grad()
+                        loss_actor.backward()
+                        self.actor_optimizer.step()
 
-                    # Update temperature parameter
-                    self.log_alpha_optimizer.zero_grad()
-                    loss_alpha = self.model.loss_temperature(
-                        {"state": obs_b},
-                        entropy_temperature,
-                        self.target_entropy,
-                    )
-                    loss_alpha.backward()
-                    self.log_alpha_optimizer.step()
-
-            # Update lr
-            self.actor_lr_scheduler.step()
-            self.critic_lr_scheduler.step()
+                        # Update temperature parameter
+                        self.log_alpha_optimizer.zero_grad()
+                        loss_alpha = self.model.loss_temperature(
+                            {"state": obs_b},
+                            self.log_alpha.exp(),  # with grad
+                            self.target_entropy,
+                        )
+                        loss_alpha.backward()
+                        self.log_alpha_optimizer.step()
 
             # Save model
             if self.itr % self.save_model_freq == 0 or self.itr == self.n_train_itr - 1:
@@ -316,12 +300,12 @@ class TrainSACAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {entropy_temperature:8.4f} | t {time:8.4f}"
+                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {alpha:8.4f} | t {time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb_log_dict = {
                             "loss - critic": loss_critic,
-                            "entropy coeff": entropy_temperature,
+                            "entropy coeff": alpha,
                             "avg episode reward - train": avg_episode_reward,
                             "num episode - train": num_episode_finished,
                         }

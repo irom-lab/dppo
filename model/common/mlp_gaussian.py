@@ -186,8 +186,10 @@ class Gaussian_MLP(nn.Module):
         cond_dim,
         mlp_dims=[256, 256, 256],
         activation_type="Mish",
+        tanh_output=True,  # sometimes we want to apply tanh after sampling instead of here, e.g., in SAC
         residual_style=False,
         use_layernorm=False,
+        dropout=0.0,
         fixed_std=None,
         learn_fixed_std=False,
         std_min=0.01,
@@ -226,6 +228,7 @@ class Gaussian_MLP(nn.Module):
                 activation_type=activation_type,
                 out_activation_type="Identity",
                 use_layernorm=use_layernorm,
+                dropout=dropout,
             )
             if learn_fixed_std:
                 # initialize to fixed_std
@@ -244,6 +247,7 @@ class Gaussian_MLP(nn.Module):
         self.use_fixed_std = fixed_std is not None
         self.fixed_std = fixed_std
         self.learn_fixed_std = learn_fixed_std
+        self.tanh_output = tanh_output
 
     def forward(self, cond):
         B = len(cond["state"])
@@ -256,9 +260,9 @@ class Gaussian_MLP(nn.Module):
         if hasattr(self, "mlp_base"):
             state = self.mlp_base(state)
         out_mean = self.mlp_mean(state)
-        out_mean = torch.tanh(out_mean).view(
-            B, self.horizon_steps * self.transition_dim
-        )  # [-1, 1]
+        if self.tanh_output:
+            out_mean = torch.tanh(out_mean)
+        out_mean = out_mean.view(B, self.horizon_steps * self.transition_dim)
 
         if self.learn_fixed_std:
             out_logvar = torch.clamp(self.logvar, self.logvar_min, self.logvar_max)

@@ -138,12 +138,14 @@ class MultiStep(gym.Wrapper):
         """
         if action.ndim == 1:  # in case action_steps = 1
             action = action[None]
+        truncation = False
+        done = False
         for act_step, act in enumerate(action):
             self.cnt += 1
-
-            if len(self.done) > 0 and self.done[-1]:
-                # termination
+            if done or truncation:
                 break
+
+            # done does not differentiate terminal and truncation
             observation, reward, done, info = self.env.step(act)
 
             self.obs.append(observation)
@@ -154,6 +156,7 @@ class MultiStep(gym.Wrapper):
             ) and self.cnt >= self.max_episode_steps:
                 # truncation
                 done = True
+                truncation = True
             self.done.append(done)
             self._add_info(info)
         observation = self._get_obs(self.n_obs_steps)
@@ -165,6 +168,12 @@ class MultiStep(gym.Wrapper):
 
         # In mujoco case, done can happen within the loop above
         if self.reset_within_step and self.done[-1]:
+
+            # need to save old observation in the case of truncation only, for bootstrapping
+            if truncation:
+                info["final_obs"] = observation
+
+            # reset
             observation = (
                 self.reset()
             )  # TODO: arguments? this cannot handle video recording right now since needs to pass in options
