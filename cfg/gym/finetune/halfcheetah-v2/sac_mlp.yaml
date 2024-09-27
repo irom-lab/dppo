@@ -11,9 +11,9 @@ normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
 device: cuda:0
-env_name: hopper-medium-v2
-obs_dim: 11
-action_dim: 3
+env_name: halfcheetah-medium-v2
+obs_dim: 17
+action_dim: 6
 cond_steps: 1
 horizon_steps: 1
 act_steps: 1
@@ -76,10 +76,12 @@ train:
 model:
   _target_: model.rl.gaussian_sac.SAC_Gaussian
   randn_clip_value: 10
+  tanh_output: True # squash after sampling
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
     activation_type: ReLU
+    tanh_output: False  # squash after sampling instead
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}

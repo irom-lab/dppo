@@ -3,17 +3,19 @@ defaults:
 hydra:
   run:
     dir: ${logdir}
-_target_: agent.finetune.train_sac_agent.TrainSACAgent
+_target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
 
-name: ${env_name}_sac_mlp_ta${horizon_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
-normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
-offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
+name: ${env_name}_rlpd_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
 
+seed: 42
 device: cuda:0
-env_name: hopper-medium-v2
-obs_dim: 11
-action_dim: 3
+env_name: square
+obs_dim: 23
+action_dim: 7
 cond_steps: 1
 horizon_steps: 1
 act_steps: 1
@@ -21,14 +23,18 @@ act_steps: 1
 env:
   n_envs: 1
   name: ${env_name}
-  max_episode_steps: 1000
+  max_episode_steps: 400
   reset_at_iteration: False
   save_video: False
-  best_reward_threshold_for_success: 3
+  best_reward_threshold_for_success: 1
   wrappers:
-    mujoco_locomotion_lowdim:
+    robomimic_lowdim:
       normalization_path: ${normalization_path}
-    multi_step: 
+      low_dim_keys: ['robot0_eef_pos',
+                    'robot0_eef_quat',
+                    'robot0_gripper_qpos',
+                    'object'] # same order of preprocessed observations
+    multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}
       max_episode_steps: ${env.max_episode_steps}
@@ -36,11 +42,11 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: sac-gym-${env_name}
+  project: rlpd-${env_name}-finetune
   run: ${now:%H-%M-%S}_${name}
 
 train:
-  n_train_itr: 1000000
+  n_train_itr: 250000
   n_steps: 1
   gamma: 0.99
   actor_lr: 3e-4
@@ -55,42 +61,54 @@ train:
     first_cycle_steps: 1000
     warmup_steps: 10
     min_lr: 3e-4
-  save_model_freq: 100000
-  val_freq: 10000
+  save_model_freq: 50000
+  val_freq: 5000
   render:
     freq: 1
     num: 0
   log_freq: 200
-  # SAC specific
-  batch_size: 128
+  # RLPD specific
+  batch_size: 256
   target_ema_rate: 0.005
   scale_reward_factor: 0.1
-  critic_replay_ratio: 128
-  actor_replay_ratio: 64
+  critic_num_update: 20
   buffer_size: 1000000
   n_eval_episode: 10
   n_explore_steps: 5000
   target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
-  init_temperature: 0.2
+  init_temperature: 1
 
 model:
-  _target_: model.rl.gaussian_sac.SAC_Gaussian
+  _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
   randn_clip_value: 10
+  backup_entropy: True
+  n_critics: 10 # Ensemble size for critic models
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
-    mlp_dims: [256, 256]
+    mlp_dims: [512, 512, 512]
     activation_type: ReLU
+    residual_style: False
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
     std_max: 7.3891
     std_min: 2.061e-9
-  critic: # no layernorm
+  critic:
     _target_: model.common.critic.CriticObsAct
-    mlp_dims: [256, 256]
+    mlp_dims: [256, 256, 256]
     activation_type: ReLU
+    residual_style: False
+    use_layernorm: True
+    double_q: False # use ensemble
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     action_dim: ${action_dim}
     action_steps: ${act_steps}
   horizon_steps: ${horizon_steps}
+  device: ${device}
+
+offline_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceQLearningDataset
+  dataset_path: ${offline_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
   device: ${device}
