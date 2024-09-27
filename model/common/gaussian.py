@@ -32,7 +32,7 @@ class GaussianModel(torch.nn.Module):
             )
             self.load_state_dict(
                 checkpoint["model"],
-                strict=False,
+                strict=True,
             )
             log.info("Loaded actor from %s", network_path)
         log.info(
