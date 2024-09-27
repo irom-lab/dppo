@@ -40,8 +40,7 @@ class RLPD_Gaussian(GaussianModel):
         ]
         self.target_networks = nn.ModuleList(self.target_networks)
 
-        # Construct a "stateless" version of one of the models. It is "stateless" in
-        # the sense that the parameters are meta Tensors and do not have storage.
+        # Construct a "stateless" version of one of the models. It is "stateless" in the sense that the parameters are meta Tensors and do not have storage.
         base_model = deepcopy(self.critic_networks[0])
         self.base_model = base_model.to("meta")
         self.ensemble_params, self.ensemble_buffers = torch.func.stack_module_state(
@@ -85,10 +84,6 @@ class RLPD_Gaussian(GaussianModel):
             self.ensemble_params, self.ensemble_buffers, (obs, actions)
         )  # (n_critics, B)
         loss_critic = torch.mean((current_q - target_q[None]) ** 2)
-        # current_q = torch.stack(
-        #     [critic(obs, actions) for critic in self.critic_networks], dim=-1
-        # )  # (B, n_critics)
-        # loss_critic = torch.mean((current_q - target_q.unsqueeze(-1)) ** 2)
         return loss_critic
 
     def loss_actor(self, obs, alpha):
@@ -102,10 +97,6 @@ class RLPD_Gaussian(GaussianModel):
             self.ensemble_params, self.ensemble_buffers, (obs, action)
         )  # (n_critics, B)
         current_q = current_q.mean(dim=0) + alpha * (-logprob)
-        # current_q = torch.stack(
-        #     [critic(obs, action) for critic in self.critic_networks], dim=-1
-        # )  # (B, n_critics)
-        # current_q = current_q.mean(dim=-1) + alpha * (-logprob)
         loss_actor = -torch.mean(current_q)
         return loss_actor
 
@@ -121,15 +112,6 @@ class RLPD_Gaussian(GaussianModel):
 
     def update_target_critic(self, tau):
         """need to use ensemble_params instead of critic_networks"""
-        # for target_critic, source_critic in zip(
-        #     self.target_networks, self.critic_networks
-        # ):
-        #     for target_param, source_param in zip(
-        #         target_critic.parameters(), source_critic.parameters()
-        #     ):
-        #         target_param.data.copy_(
-        #             target_param.data * (1.0 - tau) + source_param.data * tau
-        #         )
         for target_ind, target_critic in enumerate(self.target_networks):
             for target_param_name, target_param in target_critic.named_parameters():
                 source_param = self.ensemble_params[target_param_name][target_ind]

@@ -76,20 +76,3 @@ class SAC_Gaussian(GaussianModel):
             target_param.data.copy_(
                 target_param.data * (1.0 - tau) + source_param.data * tau
             )
-
-    # ---------- Sampling ----------#
-
-    def forward(
-        self,
-        cond,
-        deterministic=False,
-        reparameterize=False,  # allow gradient
-        get_logprob=False,
-    ):
-        return super().forward(
-            cond=cond,
-            deterministic=deterministic,
-            reparameterize=reparameterize,
-            get_logprob=get_logprob,
-            apply_squashing=True,
-        )

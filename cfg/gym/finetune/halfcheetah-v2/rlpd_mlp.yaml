@@ -3,17 +3,18 @@ defaults:
 hydra:
   run:
     dir: ${logdir}
-_target_: agent.finetune.train_sac_agent.TrainSACAgent
+_target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
 
-name: ${env_name}_sac_mlp_ta${horizon_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+name: ${env_name}_rlpd_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
+seed: 42
 device: cuda:0
-env_name: hopper-medium-v2
-obs_dim: 11
-action_dim: 3
+env_name: halfcheetah-medium-v2
+obs_dim: 17
+action_dim: 6
 cond_steps: 1
 horizon_steps: 1
 act_steps: 1
@@ -28,7 +29,7 @@ env:
   wrappers:
     mujoco_locomotion_lowdim:
       normalization_path: ${normalization_path}
-    multi_step: 
+    multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}
       max_episode_steps: ${env.max_episode_steps}
@@ -36,11 +37,11 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: sac-gym-${env_name}
+  project: rlpd-${env_name}-finetune
   run: ${now:%H-%M-%S}_${name}
 
 train:
-  n_train_itr: 1000000
+  n_train_itr: 250000
   n_steps: 1
   gamma: 0.99
   actor_lr: 3e-4
@@ -55,27 +56,28 @@ train:
     first_cycle_steps: 1000
     warmup_steps: 10
     min_lr: 3e-4
-  save_model_freq: 100000
-  val_freq: 10000
+  save_model_freq: 50000
+  val_freq: 1000
   render:
     freq: 1
     num: 0
   log_freq: 200
-  # SAC specific
-  batch_size: 128
+  # RLPD specific
+  batch_size: 256
   target_ema_rate: 0.005
   scale_reward_factor: 0.1
-  critic_replay_ratio: 128
-  actor_replay_ratio: 64
+  critic_num_update: 2
   buffer_size: 1000000
   n_eval_episode: 10
-  n_explore_steps: 5000
+  n_explore_steps: 2000 # used in RLPD locomotion
   target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
-  init_temperature: 0.2
+  init_temperature: 1
 
 model:
-  _target_: model.rl.gaussian_sac.SAC_Gaussian
+  _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
   randn_clip_value: 10
+  backup_entropy: True
+  n_critics: 5 # Ensemble size for critic models
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
@@ -85,12 +87,21 @@ model:
     transition_dim: ${action_dim}
     std_max: 7.3891
     std_min: 2.061e-9
-  critic: # no layernorm
+  critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]
     activation_type: ReLU
+    use_layernorm: True
+    double_q: False # use ensemble
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     action_dim: ${action_dim}
     action_steps: ${act_steps}
   horizon_steps: ${horizon_steps}
+  device: ${device}
+
+offline_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceQLearningDataset
+  dataset_path: ${offline_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
   device: ${device}

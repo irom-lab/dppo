@@ -77,14 +77,16 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
 
         # Get the trajectory length and slice
         traj_length = cur_index - prev_index + 1
-        trajectory = {key: dataset[key][prev_index : cur_index + 1] for key in ["states", "actions", "rewards"]}
+        trajectory = {
+            key: dataset[key][prev_index : cur_index + 1]
+            for key in ["states", "actions", "rewards"]
+        }
 
         # Skip if there is no reward in the episode
         if np.sum(trajectory["rewards"]) > 0:
             # Scale observations and actions
             trajectory["states"] = (
-                2 * (trajectory["states"] - obs_min) / (obs_max - obs_min + 1e-6)
-                - 1
+                2 * (trajectory["states"] - obs_min) / (obs_max - obs_min + 1e-6) - 1
             )
             trajectory["actions"] = (
                 2

@@ -1,5 +1,5 @@
 """
-Soft Actor Critic (SAC) agent training script.
+Imitation Bootstrapped Reinforcement Learning (IBRL) agent training script.
 
 Does not support image observations right now. 
 """
@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import logging
 import wandb
+import hydra
 from collections import deque
 
 log = logging.getLogger(__name__)
@@ -18,9 +19,12 @@ from agent.finetune.train_agent import TrainAgent
 from util.scheduler import CosineAnnealingWarmupRestarts
 
 
-class TrainSACAgent(TrainAgent):
+class TrainIBRLAgent(TrainAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
+
+        # Build dataset
+        self.dataset_offline = hydra.utils.instantiate(cfg.offline_dataset)
 
         # note the discount factor gamma here is applied to reward every act_steps, instead of every env step
         self.gamma = cfg.train.gamma
@@ -41,7 +45,7 @@ class TrainSACAgent(TrainAgent):
             gamma=1.0,
         )
         self.critic_optimizer = torch.optim.AdamW(
-            self.model.critic.parameters(),
+            self.model.critic_networks.parameters(),
             lr=cfg.train.critic_lr,
             weight_decay=cfg.train.critic_weight_decay,
         )
@@ -61,13 +65,11 @@ class TrainSACAgent(TrainAgent):
         # Reward scale
         self.scale_reward_factor = cfg.train.scale_reward_factor
 
-        # Actor/critic update frequency - assume single env
-        self.critic_update_freq = int(
-            cfg.train.batch_size / cfg.train.critic_replay_ratio
-        )
-        self.actor_update_freq = int(
-            cfg.train.batch_size / cfg.train.actor_replay_ratio
-        )
+        # Number of critic updates
+        self.critic_num_update = cfg.train.critic_num_update
+
+        # Update frequency
+        self.update_freq = cfg.train.update_freq
 
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
@@ -78,17 +80,6 @@ class TrainSACAgent(TrainAgent):
         # Exploration steps at the beginning - using randomly sampled action
         self.n_explore_steps = cfg.train.n_explore_steps
 
-        # Initialize temperature parameter for entropy
-        init_temperature = cfg.train.init_temperature
-        self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
-        self.log_alpha.requires_grad = True
-        # set target entropy to -|A|/2
-        self.target_entropy = cfg.train.target_entropy
-        self.log_alpha_optimizer = torch.optim.Adam(
-            [self.log_alpha],
-            lr=cfg.train.critic_lr,
-        )
-
     def run(self):
         # make a FIFO replay buffer for obs, action, and reward
         obs_buffer = deque(maxlen=self.buffer_size)
@@ -96,6 +87,21 @@ class TrainSACAgent(TrainAgent):
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
         done_buffer = deque(maxlen=self.buffer_size)
+
+        # collect the offline dataset
+        states = self.dataset_offline.states
+        next_states = torch.roll(states, shifts=1, dims=0)
+        next_states[0] = 0
+        actions = self.dataset_offline.actions
+        rewards = self.dataset_offline.rewards
+        dones = self.dataset_offline.dones
+
+        # initailize the replay buffer with offline data
+        obs_buffer.extend(states[: self.buffer_size, None].cpu().numpy())
+        next_obs_buffer.extend(next_states[: self.buffer_size, None].cpu().numpy())
+        action_buffer.extend(actions[: self.buffer_size, None].cpu().numpy())
+        reward_buffer.extend(rewards[: self.buffer_size].cpu().numpy())
+        done_buffer.extend(dones[: self.buffer_size].cpu().numpy())
 
         # Start training loop
         timer = Timer()
@@ -222,73 +228,57 @@ class TrainSACAgent(TrainAgent):
             if (
                 not eval_mode
                 and self.itr > self.n_explore_steps
-                and self.itr % self.critic_update_freq == 0
+                and self.itr % self.update_freq == 0
             ):
-                inds = np.random.choice(len(obs_buffer), self.batch_size, replace=False)
-                obs_b = (
-                    torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
-                    .float()
-                    .to(self.device)
-                )
-                next_obs_b = (
-                    torch.from_numpy(np.array([next_obs_buffer[i] for i in inds]))
-                    .float()
-                    .to(self.device)
-                )
-                actions_b = (
-                    torch.from_numpy(np.array([action_buffer[i] for i in inds]))
-                    .float()
-                    .to(self.device)
-                )
-                rewards_b = (
-                    torch.from_numpy(np.array([reward_buffer[i] for i in inds]))
-                    .float()
-                    .to(self.device)
-                )
-                dones_b = (
-                    torch.from_numpy(np.array([done_buffer[i] for i in inds]))
-                    .float()
-                    .to(self.device)
-                )
+                obs_array = np.array(obs_buffer)
+                next_obs_array = np.array(next_obs_buffer)
+                actions_array = np.array(action_buffer)
+                rewards_array = np.array(reward_buffer)
+                dones_array = np.array(done_buffer)
 
-                # Update critic
-                entropy_temperature = self.log_alpha.exp()
-                loss_critic = self.model.loss_critic(
+                # Update critic more frequently
+                for _ in range(self.critic_num_update):
+                    # Sample from online buffer
+                    inds = np.random.choice(len(obs_buffer), self.batch_size)
+                    obs_b = torch.from_numpy(obs_array[inds]).float().to(self.device)
+                    next_obs_b = (
+                        torch.from_numpy(next_obs_array[inds]).float().to(self.device)
+                    )
+                    actions_b = (
+                        torch.from_numpy(actions_array[inds]).float().to(self.device)
+                    )
+                    rewards_b = (
+                        torch.from_numpy(rewards_array[inds]).float().to(self.device)
+                    )
+                    dones_b = (
+                        torch.from_numpy(dones_array[inds]).float().to(self.device)
+                    )
+                    # Update critic
+                    loss_critic = self.model.loss_critic(
+                        {"state": obs_b},
+                        {"state": next_obs_b},
+                        actions_b,
+                        rewards_b,
+                        dones_b,
+                        self.gamma,
+                    )
+                    self.critic_optimizer.zero_grad()
+                    loss_critic.backward()
+                    self.critic_optimizer.step()
+
+                    # Update target critic every critic update
+                    self.model.update_target_critic(self.target_ema_rate)
+
+                # Update actor once with the final batch
+                loss_actor = self.model.loss_actor(
                     {"state": obs_b},
-                    {"state": next_obs_b},
-                    actions_b,
-                    rewards_b,
-                    dones_b,
-                    self.gamma,
-                    entropy_temperature.detach(),
                 )
-                self.critic_optimizer.zero_grad()
-                loss_critic.backward()
-                self.critic_optimizer.step()
+                self.actor_optimizer.zero_grad()
+                loss_actor.backward()
+                self.actor_optimizer.step()
 
-                # Update target critic every critic update
-                self.model.update_target_critic(self.target_ema_rate)
-
-                # Delay update actor
-                loss_actor = 0
-                if self.itr % self.actor_update_freq == 0:
-                    loss_actor = self.model.loss_actor(
-                        {"state": obs_b},
-                        entropy_temperature.detach(),
-                    )
-                    self.actor_optimizer.zero_grad()
-                    loss_actor.backward()
-                    self.actor_optimizer.step()
-
-                    # Update temperature parameter
-                    self.log_alpha_optimizer.zero_grad()
-                    loss_alpha = self.model.loss_temperature(
-                        {"state": obs_b},
-                        entropy_temperature,
-                        self.target_entropy,
-                    )
-                    loss_alpha.backward()
-                    self.log_alpha_optimizer.step()
+                # Update target actor
+                self.model.update_target_actor(self.target_ema_rate)
 
             # Update lr
             self.actor_lr_scheduler.step()
@@ -322,19 +312,16 @@ class TrainSACAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {entropy_temperature:8.4f} | t {time:8.4f}"
+                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} |t:{time:8.4f}"
                     )
                     if self.use_wandb:
-                        wandb_log_dict = {
-                            "loss - critic": loss_critic,
-                            "entropy coeff": entropy_temperature,
-                            "avg episode reward - train": avg_episode_reward,
-                            "num episode - train": num_episode_finished,
-                        }
-                        if loss_actor is not None:
-                            wandb_log_dict["loss - actor"] = loss_actor
                         wandb.log(
-                            wandb_log_dict,
+                            {
+                                "loss - actor": loss_actor,
+                                "loss - critic": loss_critic,
+                                "avg episode reward - train": avg_episode_reward,
+                                "num episode - train": num_episode_finished,
+                            },
                             step=self.itr,
                             commit=True,
                         )
