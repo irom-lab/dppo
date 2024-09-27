@@ -19,6 +19,7 @@ class GaussianModel(torch.nn.Module):
         network_path=None,
         device="cuda:0",
         randn_clip_value=10,
+        tanh_output=False,
     ):
         super().__init__()
         self.device = device
@@ -29,7 +30,7 @@ class GaussianModel(torch.nn.Module):
             )
             self.load_state_dict(
                 checkpoint["model"],
-                strict=False,
+                strict=True,
             )
             log.info("Loaded actor from %s", network_path)
         log.info(
@@ -40,12 +41,16 @@ class GaussianModel(torch.nn.Module):
         # Clip sampled randn (from standard deviation) such that the sampled action is not too far away from mean
         self.randn_clip_value = randn_clip_value
 
+        # Whether to apply tanh to the **sampled** action --- used in SAC
+        self.tanh_output = tanh_output
+
     def loss(
         self,
         true_action,
         cond,
         ent_coef,
     ):
+        """no squashing"""
         B = len(true_action)
         dist = self.forward_train(
             cond,
@@ -82,7 +87,6 @@ class GaussianModel(torch.nn.Module):
         network_override=None,
         reparameterize=False,
         get_logprob=False,
-        apply_squashing=False,
     ):
         B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
         T = self.horizon_steps
@@ -103,15 +107,12 @@ class GaussianModel(torch.nn.Module):
         if get_logprob:
             log_prob = dist.log_prob(sampled_action)
 
-            # Right now we only apply squashing for SAC/RLPD, but not PPO
-            if apply_squashing:
-                sampled_action_squashed = torch.tanh(sampled_action)
-                log_prob -= torch.log(1 - sampled_action_squashed.pow(2) + 1e-6)
-                log_prob = log_prob.sum(1, keepdim=False)
-                return sampled_action_squashed.view(B, T, -1), log_prob
-            else:
-                return sampled_action.view(B, T, -1), log_prob
+            # For SAC/RLPD, squash mean after sampling here instead of right after model output as in PPO
+            if self.tanh_output:
+                sampled_action = torch.tanh(sampled_action)
+                log_prob -= torch.log(1 - sampled_action.pow(2) + 1e-6)
+            return sampled_action.view(B, T, -1), log_prob.sum(1, keepdim=False)
         else:
-            if apply_squashing:
+            if self.tanh_output:
                 sampled_action = torch.tanh(sampled_action)
             return sampled_action.view(B, T, -1)

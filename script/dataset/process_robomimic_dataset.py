@@ -3,6 +3,8 @@ Process robomimic dataset and save it into our custom format so it can be loaded
 
 Using some code from robomimic/robomimic/scripts/get_dataset_info.py
 
+Since we do not terminate episode early and cumulate reward when the goal is reached, we set terminals to all False.
+
 can-mh:
     total transitions: 62756
     total trajectories: 300
@@ -220,6 +222,7 @@ def make_dataset(load_path, save_dir, save_name_prefix, val_split, normalize):
             states=np.array(out_train["states"]),
             actions=np.array(out_train["actions"]),
             rewards=np.array(out_train["rewards"]),
+            terminals=np.array([False] * len(out_train["states"])),
             traj_lengths=np.array(out_train["traj_lengths"]),
         )
 
@@ -229,6 +232,7 @@ def make_dataset(load_path, save_dir, save_name_prefix, val_split, normalize):
             states=np.array(out_val["states"]),
             actions=np.array(out_val["actions"]),
             rewards=np.array(out_val["rewards"]),
+            terminals=np.array([False] * len(out_val["states"])),
             traj_lengths=np.array(out_val["traj_lengths"]),
         )
 
