@@ -31,8 +31,8 @@ class IBRL_Gaussian(GaussianModel):
         self.target_actor = deepcopy(actor)
 
         # Frozen pre-trained policy
-        self.imitation_policy = deepcopy(actor)
-        for param in self.imitation_policy.parameters():
+        self.bc_policy = deepcopy(actor)
+        for param in self.bc_policy.parameters():
             param.requires_grad = False
 
         # initialize critic networks
@@ -66,14 +66,22 @@ class IBRL_Gaussian(GaussianModel):
         ind = perm[:num_ind].to(self.device)
         return ind
 
-    def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma):
+    def loss_critic(
+        self,
+        obs,
+        next_obs,
+        actions,
+        rewards,
+        terminated,
+        gamma,
+    ):
         # get random critic index
         q1_ind, q2_ind = self.get_random_indices()
         with torch.no_grad():
             next_actions_il = super().forward(
                 cond=next_obs,
                 deterministic=False,
-                network_override=self.imitation_policy,
+                network_override=self.bc_policy,
             )
             next_actions_rl = super().forward(
                 cond=next_obs,
@@ -95,7 +103,7 @@ class IBRL_Gaussian(GaussianModel):
             next_q = torch.where(next_q_il > next_q_rl, next_q_il, next_q_rl)
 
             # target value
-            target_q = rewards + gamma * (1 - dones) * next_q  # (B,)
+            target_q = rewards + gamma * (1 - terminated) * next_q  # (B,)
 
         # run all critics in batch
         current_q = torch.vmap(self.critic_wrapper, in_dims=(0, 0, None))(
@@ -148,10 +156,10 @@ class IBRL_Gaussian(GaussianModel):
         q1_ind, q2_ind = self.get_random_indices()
 
         # sample an action from the imitation policy
-        imitation_action = super().forward(
+        bc_action = super().forward(
             cond=cond,
             deterministic=deterministic,
-            network_override=self.imitation_policy,
+            network_override=self.bc_policy,
         )
 
         # sample an action from the RL policy
@@ -162,8 +170,8 @@ class IBRL_Gaussian(GaussianModel):
         )
 
         # compute Q value of imitation policy
-        q_imitation_1 = self.critic_networks[q1_ind](cond, imitation_action)  # (B,)
-        q_imitation_2 = self.critic_networks[q2_ind](cond, imitation_action)
+        q_imitation_1 = self.critic_networks[q1_ind](cond, bc_action)  # (B,)
+        q_imitation_2 = self.critic_networks[q2_ind](cond, bc_action)
         q_imitation = torch.min(q_imitation_1, q_imitation_2)
 
         # compute Q value of RL policy
@@ -183,11 +191,13 @@ class IBRL_Gaussian(GaussianModel):
 
             # sample according to the weights
             q_indices = torch.multinomial(q_weights, 1)
-            action = torch.where((q_indices == 0)[:, None], imitation_action, rl_action)
+            action = torch.where((q_indices == 0)[:, None], bc_action, rl_action)
+            action = bc_action
         else:
             action = torch.where(
                 q_imitation > q_rl[:, None, None],
-                imitation_action,
+                bc_action,
                 rl_action,
             )
+            action = bc_action
         return action

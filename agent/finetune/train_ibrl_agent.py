@@ -103,8 +103,8 @@ class TrainIBRLAgent(TrainAgent):
             obs_buffer.extend(states.cpu().numpy())
             next_obs_buffer.extend(next_states.cpu().numpy())
             action_buffer.extend(actions.cpu().numpy())
-            reward_buffer.extend(rewards.cpu().numpy())
-            terminated_buffer.extend(terminated.cpu().numpy())
+            reward_buffer.extend(rewards.cpu().numpy().flatten())
+            terminated_buffer.extend(terminated.cpu().numpy().flatten())
 
         # Start training loop
         timer = Timer()
@@ -125,7 +125,7 @@ class TrainIBRLAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = (
                 self.itr % self.val_freq == 0
-                # and self.itr > self.n_explore_steps
+                and self.itr > self.n_explore_steps
                 and not self.force_train
             )
             n_steps = (

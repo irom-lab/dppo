@@ -52,7 +52,6 @@ class TrainRLPDAgent(TrainAgent):
             gamma=1.0,
         )
         self.critic_optimizer = torch.optim.AdamW(
-            # self.model.critic_networks.parameters(),
             self.model.ensemble_params.values(),  # https://github.com/pytorch/pytorch/issues/120581
             lr=cfg.train.critic_lr,
             weight_decay=cfg.train.critic_weight_decay,
