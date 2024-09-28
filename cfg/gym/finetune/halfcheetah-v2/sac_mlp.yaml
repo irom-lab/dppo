@@ -6,10 +6,11 @@ hydra:
 _target_: agent.finetune.train_sac_agent.TrainSACAgent
 
 name: ${env_name}_sac_mlp_ta${horizon_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
+seed: 42
 device: cuda:0
 env_name: halfcheetah-medium-v2
 obs_dim: 17
@@ -28,7 +29,7 @@ env:
   wrappers:
     mujoco_locomotion_lowdim:
       normalization_path: ${normalization_path}
-    multi_step: 
+    multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}
       max_episode_steps: ${env.max_episode_steps}
@@ -44,17 +45,7 @@ train:
   n_steps: 1
   gamma: 0.99
   actor_lr: 3e-4
-  actor_weight_decay: 0
-  actor_lr_scheduler:
-    first_cycle_steps: 1000
-    warmup_steps: 10
-    min_lr: 3e-4
-  critic_lr: 3e-4
-  critic_weight_decay: 0
-  critic_lr_scheduler:
-    first_cycle_steps: 1000
-    warmup_steps: 10
-    min_lr: 3e-4
+  critic_lr: 1e-3
   save_model_freq: 100000
   val_freq: 10000
   render:
@@ -62,16 +53,16 @@ train:
     num: 0
   log_freq: 200
   # SAC specific
-  batch_size: 128
+  batch_size: 256
   target_ema_rate: 0.005
-  scale_reward_factor: 0.1
-  critic_replay_ratio: 128
-  actor_replay_ratio: 64
+  scale_reward_factor: 1
+  critic_replay_ratio: 256
+  actor_replay_ratio: 128
   buffer_size: 1000000
   n_eval_episode: 10
   n_explore_steps: 5000
-  target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
-  init_temperature: 0.2
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps}'}
+  init_temperature: 1
 
 model:
   _target_: model.rl.gaussian_sac.SAC_Gaussian
@@ -86,7 +77,7 @@ model:
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
     std_max: 7.3891
-    std_min: 2.061e-9
+    std_min: 0.0067
   critic: # no layernorm
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]

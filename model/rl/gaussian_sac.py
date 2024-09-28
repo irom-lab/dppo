@@ -6,6 +6,7 @@ Soft Actor Critic (SAC) with Gaussian policy.
 import torch
 import logging
 from copy import deepcopy
+import torch.nn.functional as F
 
 from model.common.gaussian import GaussianModel
 
@@ -27,7 +28,16 @@ class SAC_Gaussian(GaussianModel):
         # initialize double target networks
         self.target_critic = deepcopy(self.critic).to(self.device)
 
-    def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma, alpha):
+    def loss_critic(
+        self,
+        obs,
+        next_obs,
+        actions,
+        rewards,
+        terminated,
+        gamma,
+        alpha,
+    ):
         with torch.no_grad():
             next_actions, next_logprobs = self.forward(
                 cond=next_obs,
@@ -41,10 +51,10 @@ class SAC_Gaussian(GaussianModel):
             next_q = torch.min(next_q1, next_q2) - alpha * next_logprobs
 
             # target value
-            target_q = rewards + gamma * next_q * (1 - dones)
+            target_q = rewards + gamma * next_q * (1 - terminated)
         current_q1, current_q2 = self.critic(obs, actions)
-        loss_critic = torch.mean((current_q1 - target_q) ** 2) + torch.mean(
-            (current_q2 - target_q) ** 2
+        loss_critic = F.mse_loss(current_q1, target_q) + F.mse_loss(
+            current_q2, target_q
         )
         return loss_critic
 
@@ -56,17 +66,18 @@ class SAC_Gaussian(GaussianModel):
             get_logprob=True,
         )
         current_q1, current_q2 = self.critic(obs, action)
-        loss_actor = -torch.min(current_q1, current_q2).mean() + alpha * logprob.mean()
-        return loss_actor
+        loss_actor = -torch.min(current_q1, current_q2) + alpha * logprob
+        return loss_actor.mean()
 
     def loss_temperature(self, obs, alpha, target_entropy):
-        _, logprob = self.forward(
-            obs,
-            deterministic=False,
-            reparameterize=True,
-            get_logprob=True,
-        )
-        loss_alpha = -torch.mean(alpha * (logprob.detach() + target_entropy))
+        with torch.no_grad():
+            _, logprob = self.forward(
+                obs,
+                deterministic=False,
+                reparameterize=False,
+                get_logprob=True,
+            )
+        loss_alpha = -torch.mean(alpha * (logprob + target_entropy))
         return loss_alpha
 
     def update_target_critic(self, tau):

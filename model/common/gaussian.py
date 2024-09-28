@@ -109,12 +109,9 @@ class GaussianModel(torch.nn.Module):
 
             # For SAC/RLPD, squash mean after sampling here instead of right after model output as in PPO
             if self.tanh_output:
-                sampled_action_squashed = torch.tanh(sampled_action)
-                log_prob -= torch.log(1 - sampled_action_squashed.pow(2) + 1e-6)
-                log_prob = log_prob.sum(1, keepdim=False)
-                return sampled_action_squashed.view(B, T, -1), log_prob
-            else:
-                return sampled_action.view(B, T, -1), log_prob
+                sampled_action = torch.tanh(sampled_action)
+                log_prob -= torch.log(1 - sampled_action.pow(2) + 1e-6)
+            return sampled_action.view(B, T, -1), log_prob.sum(1, keepdim=False)
         else:
             if self.tanh_output:
                 sampled_action = torch.tanh(sampled_action)

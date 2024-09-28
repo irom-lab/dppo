@@ -59,7 +59,16 @@ class RLPD_Gaussian(GaussianModel):
         ind = perm[:num_ind].to(self.device)
         return ind
 
-    def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma, alpha):
+    def loss_critic(
+        self,
+        obs,
+        next_obs,
+        actions,
+        rewards,
+        terminated,
+        gamma,
+        alpha,
+    ):
         # get random critic index
         q1_ind, q2_ind = self.get_random_indices()
         with torch.no_grad():
@@ -73,11 +82,13 @@ class RLPD_Gaussian(GaussianModel):
             next_q = torch.min(next_q1, next_q2)
 
             # target value
-            target_q = rewards + gamma * (1 - dones) * next_q  # (B,)
+            target_q = rewards + gamma * (1 - terminated) * next_q  # (B,)
 
             # add entropy term to the target
             if self.backup_entropy:
-                target_q = target_q + gamma * (1 - dones) * alpha * (-next_logprobs)
+                target_q = target_q + gamma * (1 - terminated) * alpha * (
+                    -next_logprobs
+                )
 
         # run all critics in batch
         current_q = torch.vmap(self.critic_wrapper, in_dims=(0, 0, None))(
@@ -118,20 +129,3 @@ class RLPD_Gaussian(GaussianModel):
                 target_param.data.copy_(
                     target_param.data * (1.0 - tau) + source_param.data * tau
                 )
-
-    # ---------- Sampling ----------#
-
-    def forward(
-        self,
-        cond,
-        deterministic=False,
-        reparameterize=False,  # allow gradient
-        get_logprob=False,
-    ):
-        return super().forward(
-            cond=cond,
-            deterministic=deterministic,
-            reparameterize=reparameterize,
-            get_logprob=get_logprob,
-            apply_squashing=True,  # RLPD uses TanhSquashed like SAC
-        )

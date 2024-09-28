@@ -70,12 +70,12 @@ train:
   # RLPD specific
   batch_size: 256
   target_ema_rate: 0.005
-  scale_reward_factor: 0.1
+  scale_reward_factor: 1
   critic_num_update: 20
   buffer_size: 1000000
   n_eval_episode: 10
   n_explore_steps: 5000
-  target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps}'}
   init_temperature: 1
 
 model:
@@ -83,21 +83,21 @@ model:
   randn_clip_value: 10
   backup_entropy: True
   n_critics: 10 # Ensemble size for critic models
+  tanh_output: True # squash after sampling
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [512, 512, 512]
     activation_type: ReLU
-    residual_style: False
+    tanh_output: False  # squash after sampling instead
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
     std_max: 7.3891
-    std_min: 2.061e-9
+    std_min: 0.0067
   critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256, 256]
     activation_type: ReLU
-    residual_style: False
     use_layernorm: True
     double_q: False # use ensemble
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}

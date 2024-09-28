@@ -1,7 +1,7 @@
 """
 Reinforcement Learning with Prior Data (RLPD) agent training script.
 
-Does not support image observations right now. 
+Does not support image observations right now.
 """
 
 import os
@@ -89,7 +89,6 @@ class TrainRLPDAgent(TrainAgent):
         init_temperature = cfg.train.init_temperature
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
         self.log_alpha.requires_grad = True
-        # set target entropy to -|A|/2
         self.target_entropy = cfg.train.target_entropy
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha],
@@ -170,6 +169,8 @@ class TrainRLPDAgent(TrainAgent):
                     action_venv
                 )
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
+                firsts_trajs = np.vstack((firsts_trajs, done_venv))
+                terminated_venv = done_venv.copy()
 
                 # add to buffer in train mode
                 if not eval_mode:
@@ -276,7 +277,7 @@ class TrainRLPDAgent(TrainAgent):
                     terminated_b = torch.cat([terminated_b_off, terminated_b_on], dim=0)
 
                     # Update critic
-                    entropy_temperature = self.log_alpha.exp()
+                    alpha = self.log_alpha.exp().item()
                     loss_critic = self.model.loss_critic(
                         {"state": obs_b},
                         {"state": next_obs_b},
@@ -284,7 +285,7 @@ class TrainRLPDAgent(TrainAgent):
                         rewards_b,
                         terminated_b,
                         self.gamma,
-                        entropy_temperature.detach(),
+                        alpha,
                     )
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
@@ -296,7 +297,7 @@ class TrainRLPDAgent(TrainAgent):
                 # Update actor once with the final batch
                 loss_actor = self.model.loss_actor(
                     {"state": obs_b},
-                    entropy_temperature.detach(),
+                    alpha,
                 )
                 self.actor_optimizer.zero_grad()
                 loss_actor.backward()
@@ -306,7 +307,7 @@ class TrainRLPDAgent(TrainAgent):
                 self.log_alpha_optimizer.zero_grad()
                 loss_alpha = self.model.loss_temperature(
                     {"state": obs_b},
-                    entropy_temperature,
+                    self.log_alpha.exp(),  # with grad
                     self.target_entropy,
                 )
                 loss_alpha.backward()
@@ -344,14 +345,14 @@ class TrainRLPDAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {entropy_temperature:8.4f} | t:{time:8.4f}"
+                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {alpha:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
                             {
                                 "loss - actor": loss_actor,
                                 "loss - critic": loss_critic,
-                                "entropy coeff": entropy_temperature,
+                                "entropy coeff": alpha,
                                 "avg episode reward - train": avg_episode_reward,
                                 "num episode - train": num_episode_finished,
                             },

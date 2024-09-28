@@ -37,7 +37,7 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: rlpd-${env_name}-finetune
+  project: rlpd-${env_name}
   run: ${now:%H-%M-%S}_${name}
 
 train:
@@ -57,7 +57,7 @@ train:
     warmup_steps: 10
     min_lr: 3e-4
   save_model_freq: 50000
-  val_freq: 1000
+  val_freq: 5000
   render:
     freq: 1
     num: 0
@@ -65,28 +65,30 @@ train:
   # RLPD specific
   batch_size: 256
   target_ema_rate: 0.005
-  scale_reward_factor: 0.1
-  critic_num_update: 2
+  scale_reward_factor: 1
+  critic_num_update: 20
   buffer_size: 1000000
   n_eval_episode: 10
-  n_explore_steps: 2000 # used in RLPD locomotion
-  target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
+  n_explore_steps: 5000
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps}'}
   init_temperature: 1
 
 model:
   _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
   randn_clip_value: 10
+  tanh_output: True # squash after sampling
   backup_entropy: True
-  n_critics: 5 # Ensemble size for critic models
+  n_critics: 10 # Ensemble size for critic models
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
     activation_type: ReLU
+    tanh_output: False  # squash after sampling instead
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
     std_max: 7.3891
-    std_min: 2.061e-9
+    std_min: 0.0067
   critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]
