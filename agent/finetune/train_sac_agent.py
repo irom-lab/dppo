@@ -95,7 +95,7 @@ class TrainSACAgent(TrainAgent):
         next_obs_buffer = deque(maxlen=self.buffer_size)
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
-        done_buffer = deque(maxlen=self.buffer_size)
+        terminated_buffer = deque(maxlen=self.buffer_size)
 
         # Start training loop
         timer = Timer()
@@ -168,13 +168,14 @@ class TrainSACAgent(TrainAgent):
                 if not eval_mode:
                     for i in range(self.n_envs):
                         obs_buffer.append(prev_obs_venv["state"][i])
-                        next_obs_buffer.append(obs_venv["state"][i])
+                        if "final_obs" in info_venv[i]:  # truncated
+                            next_obs_buffer.append(info_venv[i]["final_obs"]["state"])
+                            terminated_venv[i] = False
+                        else:  # first obs in new episode
+                            next_obs_buffer.append(obs_venv["state"][i])
                         action_buffer.append(action_venv[i])
                         reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
-                        done_buffer.append(done_venv[i])
-                firsts_trajs = np.vstack(
-                    (firsts_trajs, done_venv)
-                )  # offset by one step
+                        terminated_buffer.append(terminated_venv[i])
                 prev_obs_venv = obs_venv
 
                 # check if enough eval episodes are done
@@ -245,8 +246,8 @@ class TrainSACAgent(TrainAgent):
                     .float()
                     .to(self.device)
                 )
-                dones_b = (
-                    torch.from_numpy(np.array([done_buffer[i] for i in inds]))
+                terminated_b = (
+                    torch.from_numpy(np.array([terminated_buffer[i] for i in inds]))
                     .float()
                     .to(self.device)
                 )
@@ -258,7 +259,7 @@ class TrainSACAgent(TrainAgent):
                     {"state": next_obs_b},
                     actions_b,
                     rewards_b,
-                    dones_b,
+                    terminated_b,
                     self.gamma,
                     entropy_temperature.detach(),
                 )

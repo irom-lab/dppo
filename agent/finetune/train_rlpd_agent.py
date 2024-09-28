@@ -102,7 +102,7 @@ class TrainRLPDAgent(TrainAgent):
         next_obs_buffer = deque(maxlen=self.buffer_size)
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
-        done_buffer = deque(maxlen=self.buffer_size)
+        terminated_buffer = deque(maxlen=self.buffer_size)
 
         # Start training loop
         timer = Timer()
@@ -175,13 +175,14 @@ class TrainRLPDAgent(TrainAgent):
                 if not eval_mode:
                     for i in range(self.n_envs):
                         obs_buffer.append(prev_obs_venv["state"][i])
-                        next_obs_buffer.append(obs_venv["state"][i])
+                        if "final_obs" in info_venv[i]:  # truncated
+                            next_obs_buffer.append(info_venv[i]["final_obs"]["state"])
+                            terminated_venv[i] = False
+                        else:  # first obs in new episode
+                            next_obs_buffer.append(obs_venv["state"][i])
                         action_buffer.append(action_venv[i])
                         reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
-                        done_buffer.append(done_venv[i])
-                firsts_trajs = np.vstack(
-                    (firsts_trajs, done_venv)
-                )  # offset by one step
+                        terminated_buffer.append(terminated_venv[i])
                 prev_obs_venv = obs_venv
 
                 # check if enough eval episodes are done
@@ -231,7 +232,7 @@ class TrainRLPDAgent(TrainAgent):
                 next_obs_array = np.array(next_obs_buffer)
                 actions_array = np.array(action_buffer)
                 rewards_array = np.array(reward_buffer)
-                dones_array = np.array(done_buffer)
+                terminated_array = np.array(terminated_buffer)
 
                 # Update critic more frequently
                 dataloader_iterator = iter(self.dataloader_offline)
@@ -249,7 +250,7 @@ class TrainRLPDAgent(TrainAgent):
                     rewards_b_off = (
                         batch_offline.rewards.flatten() * self.scale_reward_factor
                     )
-                    dones_b_off = batch_offline.dones.flatten()
+                    terminated_b_off = batch_offline.dones.flatten()
 
                     # Sample from ONLINE buffer
                     inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
@@ -263,8 +264,8 @@ class TrainRLPDAgent(TrainAgent):
                     rewards_b_on = (
                         torch.from_numpy(rewards_array[inds]).float().to(self.device)
                     )
-                    dones_b_on = (
-                        torch.from_numpy(dones_array[inds]).float().to(self.device)
+                    terminated_b_on = (
+                        torch.from_numpy(terminated_array[inds]).float().to(self.device)
                     )
 
                     # merge offline and online data
@@ -272,7 +273,7 @@ class TrainRLPDAgent(TrainAgent):
                     next_obs_b = torch.cat([next_obs_b_off, next_obs_b_on], dim=0)
                     actions_b = torch.cat([actions_b_off, actions_b_on], dim=0)
                     rewards_b = torch.cat([rewards_b_off, rewards_b_on], dim=0)
-                    dones_b = torch.cat([dones_b_off, dones_b_on], dim=0)
+                    terminated_b = torch.cat([terminated_b_off, terminated_b_on], dim=0)
 
                     # Update critic
                     entropy_temperature = self.log_alpha.exp()
@@ -281,7 +282,7 @@ class TrainRLPDAgent(TrainAgent):
                         {"state": next_obs_b},
                         actions_b,
                         rewards_b,
-                        dones_b,
+                        terminated_b,
                         self.gamma,
                         entropy_temperature.detach(),
                     )

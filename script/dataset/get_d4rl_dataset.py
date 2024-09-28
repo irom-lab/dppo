@@ -29,16 +29,16 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
     logger.info(f"State shape: {dataset['states'].shape}")
     logger.info(f"Action shape: {dataset['actions'].shape}")
 
+    # determine trajectories from terminals and timeouts
     terminal_indices = np.argwhere(dataset["terminals"])[:, 0]
     timeout_indices = np.argwhere(dataset["timeouts"])[:, 0]
     done_indices = np.sort(np.concatenate([terminal_indices, timeout_indices]))
+    traj_lengths = np.diff(np.concatenate([[0], done_indices + 1]))
 
     obs_min = np.min(dataset["states"], axis=0)
     obs_max = np.max(dataset["states"], axis=0)
     action_min = np.min(dataset["actions"], axis=0)
     action_max = np.max(dataset["actions"], axis=0)
-
-    traj_lengths = np.diff(np.concatenate([[0], done_indices + 1]))
 
     logger.info(f"Total transitions: {np.sum(traj_lengths)}")
     logger.info(f"Total trajectories: {len(traj_lengths)}")
@@ -62,7 +62,13 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
     train_indices = random.sample(range(num_traj), k=num_train)
 
     # Prepare data containers for train and validation sets
-    out_train = {"states": [], "actions": [], "rewards": [], "traj_lengths": []}
+    out_train = {
+        "states": [],
+        "actions": [],
+        "rewards": [],
+        "terminals": [],
+        "traj_lengths": [],
+    }
     out_val = deepcopy(out_train)
     prev_index = 0
     train_episode_reward_all = []
@@ -79,7 +85,7 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
         traj_length = cur_index - prev_index + 1
         trajectory = {
             key: dataset[key][prev_index : cur_index + 1]
-            for key in ["states", "actions", "rewards"]
+            for key in ["states", "actions", "rewards", "terminals"]
         }
 
         # Skip if there is no reward in the episode
@@ -95,7 +101,7 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
                 - 1
             )
 
-            for key in ["states", "actions", "rewards"]:
+            for key in ["states", "actions", "rewards", "terminals"]:
                 out[key].append(trajectory[key])
             out["traj_lengths"].append(traj_length)
             episode_reward_all.append(np.sum(trajectory["rewards"]))
@@ -105,7 +111,7 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
         prev_index = cur_index + 1
 
     # Concatenate trajectories
-    for key in ["states", "actions", "rewards"]:
+    for key in ["states", "actions", "rewards", "terminals"]:
         out_train[key] = np.concatenate(out_train[key], axis=0)
 
         # Only concatenate validation set if it exists
@@ -119,6 +125,7 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
         states=np.array(out_train["states"]),
         actions=np.array(out_train["actions"]),
         rewards=np.array(out_train["rewards"]),
+        terminals=np.array(out_train["terminals"]),
         traj_lengths=np.array(out_train["traj_lengths"]),
     )
 
@@ -129,6 +136,7 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
         states=np.array(out_val["states"]),
         actions=np.array(out_val["actions"]),
         rewards=np.array(out_val["rewards"]),
+        terminals=np.array(out_val["terminals"]),
         traj_lengths=np.array(out_val["traj_lengths"]),
     )
 
@@ -154,8 +162,12 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
     logger.info(
         f"Train - Mean/Std trajectory length: {np.mean(out_train['traj_lengths'])}, {np.std(out_train['traj_lengths'])}"
     )
-    logger.info(
-        f"Val - Mean/Std trajectory length: {np.mean(out_val['traj_lengths'])}, {np.std(out_val['traj_lengths'])}"
+    (
+        logger.info(
+            f"Val - Mean/Std trajectory length: {np.mean(out_val['traj_lengths'])}, {np.std(out_val['traj_lengths'])}"
+        )
+        if val_split > 0
+        else None
     )
 
 

@@ -152,8 +152,6 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
         max_n_episodes=10000,
         use_img=False,
         device="cuda:0",
-        clip_to_eps=True,
-        eps=1e-5,
     ):
         super().__init__(
             dataset_path,
@@ -164,10 +162,6 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
             use_img,
             device,
         )
-        if clip_to_eps:
-            lim = 1 - eps
-            self.actions = torch.clip(self.actions, -lim, lim)
-
         # Load dataset to device specified (additional processing for rewards and dones)
         if dataset_path.endswith(".npz"):
             dataset = np.load(dataset_path, allow_pickle=False)  # only np arrays
@@ -183,12 +177,7 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
             torch.from_numpy(dataset["rewards"][:total_num_steps]).float().to(device)
         )  # (total_num_steps, action_dim)
         log.info(f"Rewards shape/type: {self.rewards.shape, self.rewards.dtype}")
-
-        # set the last done of each trajectory to 1
-        self.dones = torch.zeros_like(self.rewards)
-        cumulative_traj_length = np.cumsum(traj_lengths)
-        for i, traj_length in enumerate(cumulative_traj_length):
-            self.dones[traj_length - 1] = 1
+        self.dones = torch.from_numpy(dataset["terminals"][:total_num_steps]).to(device)
         log.info(f"Dones shape/type: {self.dones.shape, self.dones.dtype}")
 
     def __getitem__(self, idx):
