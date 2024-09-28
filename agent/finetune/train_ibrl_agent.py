@@ -86,22 +86,25 @@ class TrainIBRLAgent(TrainAgent):
         next_obs_buffer = deque(maxlen=self.buffer_size)
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
-        done_buffer = deque(maxlen=self.buffer_size)
+        terminated_buffer = deque(maxlen=self.buffer_size)
 
-        # collect the offline dataset
-        states = self.dataset_offline.states
-        next_states = torch.roll(states, shifts=1, dims=0)
-        next_states[0] = 0
-        actions = self.dataset_offline.actions
-        rewards = self.dataset_offline.rewards
-        dones = self.dataset_offline.dones
-
-        # initailize the replay buffer with offline data
-        obs_buffer.extend(states[: self.buffer_size, None].cpu().numpy())
-        next_obs_buffer.extend(next_states[: self.buffer_size, None].cpu().numpy())
-        action_buffer.extend(actions[: self.buffer_size, None].cpu().numpy())
-        reward_buffer.extend(rewards[: self.buffer_size].cpu().numpy())
-        done_buffer.extend(dones[: self.buffer_size].cpu().numpy())
+        # load offline dataset into replay buffer
+        dataloader_offline = torch.utils.data.DataLoader(
+            self.dataset_offline,
+            batch_size=self.batch_size,
+            drop_last=False,
+            num_workers=4 if self.dataset_offline.device == "cpu" else 0,
+            pin_memory=True if self.dataset_offline.device == "cpu" else False,
+        )
+        for batch in dataloader_offline:
+            actions, states_and_next, rewards, terminated = batch
+            states = states_and_next["state"]
+            next_states = states_and_next["next_state"]
+            obs_buffer.extend(states.cpu().numpy())
+            next_obs_buffer.extend(next_states.cpu().numpy())
+            action_buffer.extend(actions.cpu().numpy())
+            reward_buffer.extend(rewards.cpu().numpy())
+            terminated_buffer.extend(terminated.cpu().numpy())
 
         # Start training loop
         timer = Timer()
@@ -122,7 +125,7 @@ class TrainIBRLAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = (
                 self.itr % self.val_freq == 0
-                and self.itr > self.n_explore_steps
+                # and self.itr > self.n_explore_steps
                 and not self.force_train
             )
             n_steps = (
@@ -169,18 +172,21 @@ class TrainIBRLAgent(TrainAgent):
                     action_venv
                 )
                 reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
+                firsts_trajs = np.vstack((firsts_trajs, done_venv))
+                terminated_venv = done_venv.copy()
 
                 # add to buffer in train mode
                 if not eval_mode:
                     for i in range(self.n_envs):
                         obs_buffer.append(prev_obs_venv["state"][i])
-                        next_obs_buffer.append(obs_venv["state"][i])
+                        if "final_obs" in info_venv[i]:  # truncated
+                            next_obs_buffer.append(info_venv[i]["final_obs"]["state"])
+                            terminated_venv[i] = False
+                        else:  # first obs in new episode
+                            next_obs_buffer.append(obs_venv["state"][i])
                         action_buffer.append(action_venv[i])
                         reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
-                        done_buffer.append(done_venv[i])
-                firsts_trajs = np.vstack(
-                    (firsts_trajs, done_venv)
-                )  # offset by one step
+                        terminated_buffer.append(terminated_venv[i])
                 prev_obs_venv = obs_venv
 
                 # check if enough eval episodes are done
@@ -234,7 +240,7 @@ class TrainIBRLAgent(TrainAgent):
                 next_obs_array = np.array(next_obs_buffer)
                 actions_array = np.array(action_buffer)
                 rewards_array = np.array(reward_buffer)
-                dones_array = np.array(done_buffer)
+                terminated_array = np.array(terminated_buffer)
 
                 # Update critic more frequently
                 for _ in range(self.critic_num_update):
@@ -250,16 +256,15 @@ class TrainIBRLAgent(TrainAgent):
                     rewards_b = (
                         torch.from_numpy(rewards_array[inds]).float().to(self.device)
                     )
-                    dones_b = (
-                        torch.from_numpy(dones_array[inds]).float().to(self.device)
+                    terminated_b = (
+                        torch.from_numpy(terminated_array[inds]).float().to(self.device)
                     )
-                    # Update critic
                     loss_critic = self.model.loss_critic(
                         {"state": obs_b},
                         {"state": next_obs_b},
                         actions_b,
                         rewards_b,
-                        dones_b,
+                        terminated_b,
                         self.gamma,
                     )
                     self.critic_optimizer.zero_grad()

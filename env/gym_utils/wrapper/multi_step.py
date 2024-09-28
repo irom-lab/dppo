@@ -155,6 +155,7 @@ class MultiStep(gym.Wrapper):
                 self.max_episode_steps is not None
             ) and self.cnt >= self.max_episode_steps:
                 # truncation
+                done = True
                 truncation = True
             self.done.append(done)
             self._add_info(info)
