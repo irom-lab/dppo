@@ -91,10 +91,8 @@ class TrainIBRLAgent(TrainAgent):
         # load offline dataset into replay buffer
         dataloader_offline = torch.utils.data.DataLoader(
             self.dataset_offline,
-            batch_size=self.batch_size,
+            batch_size=len(self.dataset_offline),
             drop_last=False,
-            num_workers=4 if self.dataset_offline.device == "cpu" else 0,
-            pin_memory=True if self.dataset_offline.device == "cpu" else False,
         )
         for batch in dataloader_offline:
             actions, states_and_next, rewards, terminated = batch
@@ -236,28 +234,34 @@ class TrainIBRLAgent(TrainAgent):
                 and self.itr > self.n_explore_steps
                 and self.itr % self.update_freq == 0
             ):
-                obs_array = np.array(obs_buffer)
-                next_obs_array = np.array(next_obs_buffer)
-                actions_array = np.array(action_buffer)
-                rewards_array = np.array(reward_buffer)
-                terminated_array = np.array(terminated_buffer)
-
                 # Update critic more frequently
                 for _ in range(self.critic_num_update):
                     # Sample from online buffer
                     inds = np.random.choice(len(obs_buffer), self.batch_size)
-                    obs_b = torch.from_numpy(obs_array[inds]).float().to(self.device)
+                    obs_b = (
+                        torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
+                    )
                     next_obs_b = (
-                        torch.from_numpy(next_obs_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([next_obs_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     actions_b = (
-                        torch.from_numpy(actions_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([action_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     rewards_b = (
-                        torch.from_numpy(rewards_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([reward_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     terminated_b = (
-                        torch.from_numpy(terminated_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([terminated_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     loss_critic = self.model.loss_critic(
                         {"state": obs_b},

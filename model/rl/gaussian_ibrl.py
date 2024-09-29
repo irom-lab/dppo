@@ -192,12 +192,10 @@ class IBRL_Gaussian(GaussianModel):
             # sample according to the weights
             q_indices = torch.multinomial(q_weights, 1)
             action = torch.where((q_indices == 0)[:, None], bc_action, rl_action)
-            action = bc_action
         else:
             action = torch.where(
                 q_imitation > q_rl[:, None, None],
                 bc_action,
                 rl_action,
             )
-            action = bc_action
         return action
