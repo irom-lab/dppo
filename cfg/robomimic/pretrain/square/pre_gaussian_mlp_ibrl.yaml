@@ -41,13 +41,14 @@ model:
   network:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [1024, 1024, 1024]
-    residual_style: False
+    activation_type: ReLU
+    use_layernorm: True
+    fixed_std: 0.1
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
   horizon_steps: ${horizon_steps}
   device: ${device}
-
 
 ema:
   decay: 0.995

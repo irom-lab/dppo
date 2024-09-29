@@ -112,13 +112,13 @@ class RLPD_Gaussian(GaussianModel):
         return loss_actor
 
     def loss_temperature(self, obs, alpha, target_entropy):
-        _, logprob = self.forward(
-            obs,
-            deterministic=False,
-            reparameterize=True,
-            get_logprob=True,
-        )
-        loss_alpha = -torch.mean(alpha * (logprob.detach() + target_entropy))
+        with torch.no_grad():
+            _, logprob = self.forward(
+                obs,
+                deterministic=False,
+                get_logprob=True,
+            )
+        loss_alpha = -torch.mean(alpha * (logprob + target_entropy))
         return loss_alpha
 
     def update_target_critic(self, tau):

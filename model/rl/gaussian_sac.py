@@ -74,7 +74,6 @@ class SAC_Gaussian(GaussianModel):
             _, logprob = self.forward(
                 obs,
                 deterministic=False,
-                reparameterize=False,
                 get_logprob=True,
             )
         loss_alpha = -torch.mean(alpha * (logprob + target_entropy))
