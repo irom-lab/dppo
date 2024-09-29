@@ -19,9 +19,13 @@ from agent.finetune.train_agent import TrainAgent
 from util.scheduler import CosineAnnealingWarmupRestarts
 
 
-class TrainRLPDAgent(TrainAgent):
+class TrainCalQLAgent(TrainAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
+        assert self.n_envs == 1, "Cal-QL only supports single env for now"
+
+        # Train mode (offline or online)
+        self.train_online = cfg.train.train_online
 
         # Build dataset
         self.dataset_offline = hydra.utils.instantiate(cfg.offline_dataset)
@@ -45,7 +49,7 @@ class TrainRLPDAgent(TrainAgent):
             gamma=1.0,
         )
         self.critic_optimizer = torch.optim.AdamW(
-            self.model.ensemble_params.values(),  # https://github.com/pytorch/pytorch/issues/120581
+            self.model.critic.parameters(),
             lr=cfg.train.critic_lr,
             weight_decay=cfg.train.critic_weight_decay,
         )
@@ -62,14 +66,25 @@ class TrainRLPDAgent(TrainAgent):
         # Perturbation scale
         self.target_ema_rate = cfg.train.target_ema_rate
 
+        # Number of random actions to sample for Cal-QL
+        self.n_random_actions = cfg.train.n_random_actions
+
         # Reward scale
         self.scale_reward_factor = cfg.train.scale_reward_factor
 
         # Number of critic updates
-        self.critic_num_update = cfg.train.critic_num_update
+        self.num_update = cfg.train.num_update
 
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
+
+        # Online only configs
+        if self.train_online:
+            # number of episode to colect per epoch for training
+            self.n_episode_per_epoch = cfg.train.n_episode_per_epoch
+            
+            # UTD ratio
+            self.online_utd_ratio = cfg.train.online_utd_ratio
 
         # Eval episodes
         self.n_eval_episode = cfg.train.n_eval_episode
@@ -81,6 +96,7 @@ class TrainRLPDAgent(TrainAgent):
         init_temperature = cfg.train.init_temperature
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
         self.log_alpha.requires_grad = True
+        self.automatic_entropy_tuning = cfg.train.automatic_entropy_tuning
         self.target_entropy = cfg.train.target_entropy
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha],
@@ -93,7 +109,15 @@ class TrainRLPDAgent(TrainAgent):
         next_obs_buffer = deque(maxlen=self.buffer_size)
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
+        reward_to_go_buffer = deque(maxlen=self.buffer_size)
         terminated_buffer = deque(maxlen=self.buffer_size)
+        if not self.train_online:
+            obs_array = np.array(obs_buffer)
+            next_obs_array = np.array(next_obs_buffer)
+            actions_array = np.array(action_buffer)
+            rewards_array = np.array(reward_buffer)
+            reward_to_go_array = np.array(reward_to_go_buffer)
+            terminated_array = np.array(terminated_buffer)
 
         # load offline dataset into replay buffer
         dataloader_offline = torch.utils.data.DataLoader(
@@ -102,13 +126,14 @@ class TrainRLPDAgent(TrainAgent):
             drop_last=False,
         )
         for batch in dataloader_offline:
-            actions, states_and_next, rewards, terminated = batch
+            actions, states_and_next, rewards, terminated, reward_to_go = batch
             states = states_and_next["state"]
             next_states = states_and_next["next_state"]
             obs_buffer_off = states.cpu().numpy()
             next_obs_buffer_off = next_states.cpu().numpy()
             action_buffer_off = actions.cpu().numpy()
             reward_buffer_off = rewards.cpu().numpy().flatten()
+            reward_to_go_buffer_off = reward_to_go.cpu().numpy().flatten()
             terminated_buffer_off = terminated.cpu().numpy().flatten()
 
         # Start training loop
@@ -133,9 +158,13 @@ class TrainRLPDAgent(TrainAgent):
                 and self.itr >= self.n_explore_steps
                 and not self.force_train
             )
-            n_steps = (
-                self.n_steps if not eval_mode else int(1e5)
-            )  # large number for eval mode
+            # during eval, we collect a fixed number of episodes, so we set n_steps to a large value
+            if eval_mode:
+                n_steps = int(1e5)
+            elif not self.train_online:
+                n_steps = 0
+            else:
+                n_steps = int(1e5)  # use episodes
             self.model.eval() if eval_mode else self.model.train()
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) at the beginning
@@ -150,7 +179,9 @@ class TrainRLPDAgent(TrainAgent):
 
             # Collect a set of trajectories from env
             cnt_episode = 0
-            for _ in range(n_steps):
+            for env_step in range(n_steps):
+                if env_step % 100 == 0:
+                    print(f"Completed environment step {env_step}")
 
                 # Select action
                 if self.itr < self.n_explore_steps:
@@ -176,7 +207,7 @@ class TrainRLPDAgent(TrainAgent):
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
-                reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
+                reward_trajs = np.vstack((reward_trajs, reward_venv))
                 firsts_trajs = np.vstack((firsts_trajs, done_venv))
                 terminated_venv = done_venv.copy()
 
@@ -198,6 +229,33 @@ class TrainRLPDAgent(TrainAgent):
                 cnt_episode += np.sum(done_venv)
                 if eval_mode and cnt_episode >= self.n_eval_episode:
                     break
+                if not eval_mode and cnt_episode >= self.n_episode_per_epoch:
+                    break
+
+            # compute reward-to-go (assume self.n_envs == 1)
+            if not eval_mode:
+                reward_to_go = np.zeros_like(reward_trajs)
+                env_steps = np.where(firsts_trajs[:, env_ind] == 1)[0]
+                traj_lengths = np.diff(env_steps)
+                cumulative_traj_length = np.cumsum(traj_lengths)
+                prev_traj_length = 0
+                for i, traj_length in enumerate(cumulative_traj_length):
+                    traj_rewards = reward_trajs[prev_traj_length:traj_length, 0]
+                    returns = np.zeros_like(traj_rewards)
+                    prev_return = 0
+                    for t in range(len(traj_rewards)):
+                        returns[-t - 1] = (
+                            traj_rewards[-t - 1] + self.gamma * prev_return
+                        )
+                        prev_return = returns[-t - 1]
+                    # Assign the computed returns back to the reward_to_go array
+                    reward_to_go[prev_traj_length:traj_length, 0] = returns
+                    prev_traj_length = traj_length
+                # TODO: only work for a single env?
+
+                # add reward-to-go to buffer
+                for i in range(self.n_envs):
+                    reward_to_go_buffer.extend(reward_to_go[:, i])
 
             # Summarize episode reward --- this needs to be handled differently depending on whether the environment is reset after each iteration. Only count episodes that finish within the iteration.
             episodes_start_end = []
@@ -237,70 +295,111 @@ class TrainRLPDAgent(TrainAgent):
 
             # Update models
             if not eval_mode and self.itr >= self.n_explore_steps:
+                # TODO: is this slow in online?
+                if self.train_online:
+                    obs_array = np.array(obs_buffer)
+                    next_obs_array = np.array(next_obs_buffer)
+                    actions_array = np.array(action_buffer)
+                    rewards_array = np.array(reward_buffer)
+                    reward_to_go_array = np.array(reward_to_go_buffer)
+                    terminated_array = np.array(terminated_buffer)
 
-                # Update critic more frequently
-                for _ in range(self.critic_num_update):
+                # override num_update
+                if self.train_online:
+                    num_update = np.sum(cumulative_traj_length)
+                else:
+                    num_update = self.num_update
+                for _ in range(num_update):
 
                     # Sample from OFFLINE buffer
-                    inds = np.random.choice(len(obs_buffer_off), self.batch_size // 2)
-                    obs_b_off = (
+                    inds = np.random.choice(
+                        len(obs_buffer_off),
+                        self.batch_size // 2 if self.train_online else self.batch_size,
+                    )
+                    obs_b = (
                         torch.from_numpy(obs_buffer_off[inds]).float().to(self.device)
                     )
-                    next_obs_b_off = (
+                    next_obs_b = (
                         torch.from_numpy(next_obs_buffer_off[inds])
                         .float()
                         .to(self.device)
                     )
-                    actions_b_off = (
+                    actions_b = (
                         torch.from_numpy(action_buffer_off[inds])
                         .float()
                         .to(self.device)
                     )
-                    rewards_b_off = (
+                    rewards_b = (
                         torch.from_numpy(reward_buffer_off[inds])
                         .float()
                         .to(self.device)
                     )
-                    terminated_b_off = (
+                    terminated_b = (
                         torch.from_numpy(terminated_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    reward_to_go_b = (
+                        torch.from_numpy(reward_to_go_buffer_off[inds])
                         .float()
                         .to(self.device)
                     )
 
                     # Sample from ONLINE buffer
-                    inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
-                    obs_b_on = (
-                        torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
-                        .float()
-                        .to(self.device)
-                    )
-                    next_obs_b_on = (
-                        torch.from_numpy(np.array([next_obs_buffer[i] for i in inds]))
-                        .float()
-                        .to(self.device)
-                    )
-                    actions_b_on = (
-                        torch.from_numpy(np.array([action_buffer[i] for i in inds]))
-                        .float()
-                        .to(self.device)
-                    )
-                    rewards_b_on = (
-                        torch.from_numpy(np.array([reward_buffer[i] for i in inds]))
-                        .float()
-                        .to(self.device)
-                    )
-                    terminated_b_on = (
-                        torch.from_numpy(np.array([terminated_buffer[i] for i in inds]))
-                        .float()
-                        .to(self.device)
-                    )
+                    if self.train_online:
+                        inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
+                        obs_b_on = (
+                            torch.from_numpy(obs_array[inds]).float().to(self.device)
+                        )
+                        next_obs_b_on = (
+                            torch.from_numpy(next_obs_array[inds])
+                            .float()
+                            .to(self.device)
+                        )
+                        actions_b_on = (
+                            torch.from_numpy(actions_array[inds])
+                            .float()
+                            .to(self.device)
+                        )
+                        rewards_b_on = (
+                            torch.from_numpy(rewards_array[inds])
+                            .float()
+                            .to(self.device)
+                        )
+                        terminated_b_on = (
+                            torch.from_numpy(terminated_array[inds])
+                            .float()
+                            .to(self.device)
+                        )
+                        reward_to_go_b_on = (
+                            torch.from_numpy(reward_to_go_array[inds])
+                            .float()
+                            .to(self.device)
+                        )
 
-                    # merge offline and online data
-                    obs_b = torch.cat([obs_b_off, obs_b_on], dim=0)
-                    next_obs_b = torch.cat([next_obs_b_off, next_obs_b_on], dim=0)
-                    actions_b = torch.cat([actions_b_off, actions_b_on], dim=0)
-                    rewards_b = torch.cat([rewards_b_off, rewards_b_on], dim=0)
-                    terminated_b = torch.cat([terminated_b_off, terminated_b_on], dim=0)
+                        # merge offline and online data
+                        obs_b = torch.cat([obs_b, obs_b_on], dim=0)
+                        next_obs_b = torch.cat([next_obs_b, next_obs_b_on], dim=0)
+                        actions_b = torch.cat([actions_b, actions_b_on], dim=0)
+                        rewards_b = torch.cat([rewards_b, rewards_b_on], dim=0)
+                        terminated_b = torch.cat([terminated_b, terminated_b_on], dim=0)
+                        reward_to_go_b = torch.cat(
+                            [reward_to_go_b, reward_to_go_b_on], dim=0
+                        )
+
+                    # Get a random action for Cal-QL
+                    random_actions = (
+                        torch.rand(
+                            (
+                                self.batch_size,
+                                self.n_random_actions,
+                                self.horizon_steps,
+                                self.action_dim,
+                            )
+                        ).to(self.device)
+                        * 2
+                        - 1
+                    )  # scale to [-1, 1]
 
                     # Update critic
                     alpha = self.log_alpha.exp().item()
@@ -308,7 +407,9 @@ class TrainRLPDAgent(TrainAgent):
                         {"state": obs_b},
                         {"state": next_obs_b},
                         actions_b,
+                        random_actions,
                         rewards_b,
+                        reward_to_go_b,
                         terminated_b,
                         self.gamma,
                         alpha,
@@ -317,27 +418,28 @@ class TrainRLPDAgent(TrainAgent):
                     loss_critic.backward()
                     self.critic_optimizer.step()
 
-                    # Update target critic every critic update
+                    # Update target critic
                     self.model.update_target_critic(self.target_ema_rate)
 
-                # Update actor once with the final batch
-                loss_actor = self.model.loss_actor(
-                    {"state": obs_b},
-                    alpha,
-                )
-                self.actor_optimizer.zero_grad()
-                loss_actor.backward()
-                self.actor_optimizer.step()
+                    # Update actor
+                    loss_actor = self.model.loss_actor(
+                        {"state": obs_b},
+                        alpha,
+                    )
+                    self.actor_optimizer.zero_grad()
+                    loss_actor.backward()
+                    self.actor_optimizer.step()
 
-                # Update temperature parameter
-                self.log_alpha_optimizer.zero_grad()
-                loss_alpha = self.model.loss_temperature(
-                    {"state": obs_b},
-                    self.log_alpha.exp(),  # with grad
-                    self.target_entropy,
-                )
-                loss_alpha.backward()
-                self.log_alpha_optimizer.step()
+                    # Update temperature parameter
+                    if self.automatic_entropy_tuning:
+                        self.log_alpha_optimizer.zero_grad()
+                        loss_alpha = self.model.loss_temperature(
+                            {"state": obs_b},
+                            self.log_alpha.exp(),  # with grad
+                            self.target_entropy,
+                        )
+                        loss_alpha.backward()
+                        self.log_alpha_optimizer.step()
 
             # Update lr
             self.actor_lr_scheduler.step()
@@ -349,7 +451,7 @@ class TrainRLPDAgent(TrainAgent):
 
             # Log loss and save metrics
             run_results.append({"itr": self.itr})
-            if self.itr % self.log_freq == 0 and self.itr > self.n_explore_steps:
+            if self.itr % self.log_freq == 0 and self.itr >= self.n_explore_steps:
                 time = timer()
                 if eval_mode:
                     log.info(

@@ -26,11 +26,13 @@ class GaussianModel(torch.nn.Module):
         self.network = network.to(device)
         if network_path is not None:
             checkpoint = torch.load(
-                network_path, map_location=self.device, weights_only=True
+                network_path,
+                map_location=self.device,
+                weights_only=True,
             )
             self.load_state_dict(
                 checkpoint["model"],
-                strict=True,
+                strict=False,
             )
             log.info("Loaded actor from %s", network_path)
         log.info(
