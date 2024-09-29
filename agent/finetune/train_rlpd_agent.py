@@ -25,13 +25,6 @@ class TrainRLPDAgent(TrainAgent):
 
         # Build dataset
         self.dataset_offline = hydra.utils.instantiate(cfg.offline_dataset)
-        self.dataloader_offline = torch.utils.data.DataLoader(
-            self.dataset_offline,
-            batch_size=self.batch_size // 2,
-            num_workers=4 if self.dataset_offline.device == "cpu" else 0,
-            shuffle=True,
-            pin_memory=True if self.dataset_offline.device == "cpu" else False,
-        )
 
         # note the discount factor gamma here is applied to reward every act_steps, instead of every env step
         self.gamma = cfg.train.gamma
@@ -101,6 +94,22 @@ class TrainRLPDAgent(TrainAgent):
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
         terminated_buffer = deque(maxlen=self.buffer_size)
+
+        # load offline dataset into replay buffer
+        dataloader_offline = torch.utils.data.DataLoader(
+            self.dataset_offline,
+            batch_size=len(self.dataset_offline),
+            drop_last=False,
+        )
+        for batch in dataloader_offline:
+            actions, states_and_next, rewards, terminated = batch
+            states = states_and_next["state"]
+            next_states = states_and_next["next_state"]
+            obs_buffer_off = states.cpu().numpy()
+            next_obs_buffer_off = next_states.cpu().numpy()
+            action_buffer_off = actions.cpu().numpy()
+            reward_buffer_off = rewards.cpu().numpy().flatten()
+            terminated_buffer_off = terminated.cpu().numpy().flatten()
 
         # Start training loop
         timer = Timer()
@@ -228,44 +237,62 @@ class TrainRLPDAgent(TrainAgent):
 
             # Update models
             if not eval_mode and self.itr > self.n_explore_steps:
-                obs_array = np.array(obs_buffer)
-                next_obs_array = np.array(next_obs_buffer)
-                actions_array = np.array(action_buffer)
-                rewards_array = np.array(reward_buffer)
-                terminated_array = np.array(terminated_buffer)
 
                 # Update critic more frequently
-                dataloader_iterator = iter(self.dataloader_offline)
                 for _ in range(self.critic_num_update):
 
                     # Sample from OFFLINE buffer
-                    try:
-                        batch_offline = next(dataloader_iterator)
-                    except StopIteration:
-                        dataloader_iterator = iter(self.dataloader_offline)
-                        batch_offline = next(dataloader_iterator)
-                    obs_b_off = batch_offline.conditions["state"]
-                    next_obs_b_off = batch_offline.conditions["next_state"]
-                    actions_b_off = batch_offline.actions
-                    rewards_b_off = (
-                        batch_offline.rewards.flatten() * self.scale_reward_factor
+                    inds = np.random.choice(len(obs_buffer_off), self.batch_size // 2)
+                    obs_b_off = (
+                        torch.from_numpy(obs_buffer_off[inds]).float().to(self.device)
                     )
-                    terminated_b_off = batch_offline.dones.flatten()
+                    next_obs_b_off = (
+                        torch.from_numpy(next_obs_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    actions_b_off = (
+                        torch.from_numpy(action_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    rewards_b_off = (
+                        torch.from_numpy(reward_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    terminated_b_off = (
+                        torch.from_numpy(terminated_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
 
                     # Sample from ONLINE buffer
                     inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
-                    obs_b_on = torch.from_numpy(obs_array[inds]).float().to(self.device)
+                    obs_b_on = (
+                        torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
+                    )
                     next_obs_b_on = (
-                        torch.from_numpy(next_obs_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([next_obs_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     actions_b_on = (
-                        torch.from_numpy(actions_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([action_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     rewards_b_on = (
-                        torch.from_numpy(rewards_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([reward_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
                     terminated_b_on = (
-                        torch.from_numpy(terminated_array[inds]).float().to(self.device)
+                        torch.from_numpy(np.array([terminated_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
                     )
 
                     # merge offline and online data
