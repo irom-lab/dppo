@@ -293,6 +293,5 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
                 conditions,
                 rewards,
                 dones,
-                reward_to_gos,
             )
         return batch
