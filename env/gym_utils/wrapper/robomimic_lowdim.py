@@ -67,7 +67,7 @@ class RobomimicLowdimWrapper(gym.Env):
             low=low,
             high=high,
             shape=low.shape,
-            dtype=low.dtype,
+            dtype=np.float32,
         )
 
     def normalize_obs(self, obs):
