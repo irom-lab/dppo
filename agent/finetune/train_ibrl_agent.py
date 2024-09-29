@@ -45,7 +45,7 @@ class TrainIBRLAgent(TrainAgent):
             gamma=1.0,
         )
         self.critic_optimizer = torch.optim.AdamW(
-            self.model.critic_networks.parameters(),
+            self.model.ensemble_params.values(),  # https://github.com/pytorch/pytorch/issues/120581
             lr=cfg.train.critic_lr,
             weight_decay=cfg.train.critic_weight_decay,
         )
@@ -146,24 +146,21 @@ class TrainIBRLAgent(TrainAgent):
             for _ in range(n_steps):
 
                 # Select action
-                if self.itr < self.n_explore_steps:
-                    action_venv = self.venv.action_space.sample()
-                else:
-                    with torch.no_grad():
-                        cond = {
-                            "state": torch.from_numpy(prev_obs_venv["state"])
-                            .float()
-                            .to(self.device)
-                        }
-                        samples = (
-                            self.model(
-                                cond=cond,
-                                deterministic=eval_mode,
-                            )
-                            .cpu()
-                            .numpy()
-                        )  # n_env x horizon x act
-                    action_venv = samples[:, : self.act_steps]
+                with torch.no_grad():
+                    cond = {
+                        "state": torch.from_numpy(prev_obs_venv["state"])
+                        .float()
+                        .to(self.device)
+                    }
+                    samples = (
+                        self.model(
+                            cond=cond,
+                            deterministic=eval_mode,
+                        )
+                        .cpu()
+                        .numpy()
+                    )  # n_env x horizon x act
+                action_venv = samples[:, : self.act_steps]
 
                 # Apply multi-step action
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(

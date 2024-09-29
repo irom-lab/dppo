@@ -155,7 +155,7 @@ class IBRL_Gaussian(GaussianModel):
         """use both pre-trained and online policies"""
         q1_ind, q2_ind = self.get_random_indices()
 
-        # sample an action from the imitation policy
+        # sample an action from the BC policy
         bc_action = super().forward(
             cond=cond,
             deterministic=True,
@@ -169,7 +169,7 @@ class IBRL_Gaussian(GaussianModel):
             reparameterize=reparameterize,
         )
 
-        # compute Q value of imitation policy
+        # compute Q value of BC policy
         q_bc_1 = self.critic_networks[q1_ind](cond, bc_action)  # (B,)
         q_bc_2 = self.critic_networks[q2_ind](cond, bc_action)
         q_bc = torch.min(q_bc_1, q_bc_2)
