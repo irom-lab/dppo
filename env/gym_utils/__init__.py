@@ -204,7 +204,10 @@ def make_async(
             env.observation_space = observation_space
         else:
             env.observation_space = gym.spaces.Box(
-                -1, 1, shape=(obs_dim,), dtype=np.float64
+                -1,
+                1,
+                shape=(obs_dim,),
+                dtype=np.float32,
             )
         env.action_space = gym.spaces.Box(-1, 1, shape=(action_dim,), dtype=np.int64)
         env.metadata = {
