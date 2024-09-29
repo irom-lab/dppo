@@ -269,7 +269,11 @@ class TrainRLPDAgent(TrainAgent):
 
                     # Sample from ONLINE buffer
                     inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
-                    obs_b_on = torch.from_numpy(obs_array[inds]).float().to(self.device)
+                    obs_b_on = (
+                        torch.from_numpy(np.array([obs_buffer[i] for i in inds]))
+                        .float()
+                        .to(self.device)
+                    )
                     next_obs_b_on = (
                         torch.from_numpy(np.array([next_obs_buffer[i] for i in inds]))
                         .float()
