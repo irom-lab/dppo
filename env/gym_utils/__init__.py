@@ -184,8 +184,8 @@ def make_async(
         # Create a fake env whose sole purpose is to provide
         # obs/action spaces and metadata.
         env = gym.Env()
+        observation_space = spaces.Dict()
         if shape_meta is not None:  # rn only for images
-            observation_space = spaces.Dict()
             for key, value in shape_meta["obs"].items():
                 shape = value["shape"]
                 if key.endswith("rgb"):
@@ -194,18 +194,20 @@ def make_async(
                     min_value, max_value = -1, 1
                 else:
                     raise RuntimeError(f"Unsupported type {key}")
-                this_space = spaces.Box(
+                observation_space[key] = spaces.Box(
                     low=min_value,
                     high=max_value,
                     shape=shape,
                     dtype=np.float32,
                 )
-                observation_space[key] = this_space
-            env.observation_space = observation_space
         else:
-            env.observation_space = gym.spaces.Box(
-                -1, 1, shape=(obs_dim,), dtype=np.float64
+            observation_space["state"] = gym.spaces.Box(
+                -1,
+                1,
+                shape=(obs_dim,),
+                dtype=np.float32,
             )
+        env.observation_space = observation_space
         env.action_space = gym.spaces.Box(-1, 1, shape=(action_dim,), dtype=np.int64)
         env.metadata = {
             "render.modes": ["human", "rgb_array", "depth_array"],
