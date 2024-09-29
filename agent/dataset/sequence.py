@@ -5,17 +5,22 @@ No normalization is applied here --- we always normalize the data when pre-proce
 
 """
 
+from itertools import accumulate
 from collections import namedtuple
 import numpy as np
 import torch
 import logging
 import pickle
 import random
+from tqdm import tqdm
 
 log = logging.getLogger(__name__)
 
 Batch = namedtuple("Batch", "actions conditions")
 Transition = namedtuple("Transition", "actions conditions rewards dones")
+TransitionWithReturn = namedtuple(
+    "Transition", "actions conditions rewards dones reward_to_gos"
+)
 
 
 class StitchedSequenceDataset(torch.utils.data.Dataset):
@@ -151,7 +156,9 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
         self,
         dataset_path,
         max_n_episodes=10000,
+        discount_factor=1.0,
         device="cuda:0",
+        get_mc_return=False,
         **kwargs,
     ):
         if dataset_path.endswith(".npz"):
@@ -164,12 +171,17 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
         traj_lengths = dataset["traj_lengths"][:max_n_episodes]
         total_num_steps = np.sum(traj_lengths)
 
+        # discount factor
+        self.discount_factor = discount_factor
+
         # rewards and dones(terminals)
         self.rewards = (
             torch.from_numpy(dataset["rewards"][:total_num_steps]).float().to(device)
         )
         log.info(f"Rewards shape/type: {self.rewards.shape, self.rewards.dtype}")
-        self.dones = torch.from_numpy(dataset["terminals"][:total_num_steps]).to(device)
+        self.dones = (
+            torch.from_numpy(dataset["terminals"][:total_num_steps]).to(device).float()
+        )
         log.info(f"Dones shape/type: {self.dones.shape, self.dones.dtype}")
 
         super().__init__(
@@ -179,6 +191,31 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
             **kwargs,
         )
         log.info(f"Total number of transitions using: {len(self)}")
+
+        # compute discounted reward-to-go for each trajectory
+        self.get_mc_return = get_mc_return
+        if get_mc_return:
+            self.reward_to_go = torch.zeros_like(self.rewards)
+            cumulative_traj_length = np.cumsum(traj_lengths)
+            prev_traj_length = 0
+            for i, traj_length in tqdm(
+                enumerate(cumulative_traj_length), desc="Computing reward-to-go"
+            ):
+                traj_rewards = self.rewards[prev_traj_length:traj_length]
+
+                # compute discounted returns using accumulate and reverse
+                returns = torch.tensor(
+                    list(
+                        accumulate(
+                            reversed(traj_rewards),
+                            lambda x, y: y + self.discount_factor * x,
+                        )
+                    )[::-1]
+                )
+
+                self.reward_to_go[prev_traj_length:traj_length] = returns
+                prev_traj_length = traj_length
+            log.info(f"Computed reward-to-go for each trajectory.")
 
     def make_indices(self, traj_lengths, horizon_steps):
         """
@@ -241,5 +278,21 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
                 ]
             )
             conditions["rgb"] = images
-        batch = Transition(actions, conditions, rewards, dones)
+        if self.get_mc_return:
+            reward_to_gos = self.reward_to_go[start : (start + 1)]
+            batch = TransitionWithReturn(
+                actions,
+                conditions,
+                rewards,
+                dones,
+                reward_to_gos,
+            )
+        else:
+            batch = Transition(
+                actions,
+                conditions,
+                rewards,
+                dones,
+                reward_to_gos,
+            )
         return batch
