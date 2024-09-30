@@ -82,7 +82,7 @@ class TrainCalQLAgent(TrainAgent):
         if self.train_online:
             # number of episode to colect per epoch for training
             self.n_episode_per_epoch = cfg.train.n_episode_per_epoch
-            
+
             # UTD ratio
             self.online_utd_ratio = cfg.train.online_utd_ratio
 
@@ -232,31 +232,6 @@ class TrainCalQLAgent(TrainAgent):
                 if not eval_mode and cnt_episode >= self.n_episode_per_epoch:
                     break
 
-            # compute reward-to-go (assume self.n_envs == 1)
-            if not eval_mode:
-                reward_to_go = np.zeros_like(reward_trajs)
-                env_steps = np.where(firsts_trajs[:, env_ind] == 1)[0]
-                traj_lengths = np.diff(env_steps)
-                cumulative_traj_length = np.cumsum(traj_lengths)
-                prev_traj_length = 0
-                for i, traj_length in enumerate(cumulative_traj_length):
-                    traj_rewards = reward_trajs[prev_traj_length:traj_length, 0]
-                    returns = np.zeros_like(traj_rewards)
-                    prev_return = 0
-                    for t in range(len(traj_rewards)):
-                        returns[-t - 1] = (
-                            traj_rewards[-t - 1] + self.gamma * prev_return
-                        )
-                        prev_return = returns[-t - 1]
-                    # Assign the computed returns back to the reward_to_go array
-                    reward_to_go[prev_traj_length:traj_length, 0] = returns
-                    prev_traj_length = traj_length
-                # TODO: only work for a single env?
-
-                # add reward-to-go to buffer
-                for i in range(self.n_envs):
-                    reward_to_go_buffer.extend(reward_to_go[:, i])
-
             # Summarize episode reward --- this needs to be handled differently depending on whether the environment is reset after each iteration. Only count episodes that finish within the iteration.
             episodes_start_end = []
             for env_ind in range(self.n_envs):
@@ -271,6 +246,27 @@ class TrainCalQLAgent(TrainAgent):
                     reward_trajs[start : end + 1, env_ind]
                     for env_ind, start, end in episodes_start_end
                 ]
+
+                # compute episode returns
+                returns_trajs_split = [
+                    np.zeros_like(reward_trajs) for reward_trajs in reward_trajs_split
+                ]
+                for traj_rewards, traj_returns in zip(
+                    reward_trajs_split, returns_trajs_split
+                ):
+                    prev_return = 0
+                    for t in range(len(traj_rewards)):
+                        traj_returns[-t - 1] = (
+                            traj_rewards[-t - 1] + self.gamma * prev_return
+                        )
+                        prev_return = traj_returns[-t - 1]
+
+                # flatten (note: only works for single env!)
+                returns_trajs_split = np.concatenate(returns_trajs_split)
+
+                # extend buffer
+                reward_to_go_buffer.extend(returns_trajs_split)
+
                 num_episode_finished = len(reward_trajs_split)
                 episode_reward = np.array(
                     [np.sum(reward_traj) for reward_traj in reward_trajs_split]
@@ -306,11 +302,10 @@ class TrainCalQLAgent(TrainAgent):
 
                 # override num_update
                 if self.train_online:
-                    num_update = np.sum(cumulative_traj_length)
+                    num_update = len(reward_trajs)  # assume one env!
                 else:
                     num_update = self.num_update
                 for _ in range(num_update):
-
                     # Sample from OFFLINE buffer
                     inds = np.random.choice(
                         len(obs_buffer_off),

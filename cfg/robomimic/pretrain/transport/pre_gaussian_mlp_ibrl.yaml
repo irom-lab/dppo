@@ -27,11 +27,11 @@ train:
   n_epochs: 5000
   batch_size: 256
   learning_rate: 1e-4
-  weight_decay: 1e-6
+  weight_decay: 0
   lr_scheduler:
     first_cycle_steps: 5000
     warmup_steps: 100
-    min_lr: 1e-5
+    min_lr: 1e-4
   epoch_start_ema: 20
   update_ema_freq: 10
   save_model_freq: 1000
@@ -41,13 +41,14 @@ model:
   network:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [1024, 1024, 1024]
-    residual_style: False
+    activation_type: ReLU
+    dropout: 0.5
+    fixed_std: 0.1
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
   horizon_steps: ${horizon_steps}
   device: ${device}
-
 
 ema:
   decay: 0.995
