@@ -19,7 +19,6 @@ from util.scheduler import CosineAnnealingWarmupRestarts
 
 
 class TrainRWRDiffusionAgent(TrainAgent):
-
     def __init__(self, cfg):
         super().__init__(cfg)
 
@@ -52,14 +51,12 @@ class TrainRWRDiffusionAgent(TrainAgent):
         self.update_epochs = cfg.train.update_epochs
 
     def run(self):
-
         # Start training loop
         timer = Timer()
         run_results = []
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
-
             # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
             options_venv = [{} for _ in range(self.n_envs)]
             if self.itr % self.render_freq == 0 and self.render_video:
@@ -79,9 +76,9 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
             else:
-                firsts_trajs[0] = (
-                    done_venv  # if done at the end of last iteration, then the envs are just reset
-                )
+                firsts_trajs[
+                    0
+                ] = done_venv  # if done at the end of last iteration, then the envs are just reset
 
             # Holder
             obs_trajs = {
@@ -157,20 +154,23 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 num_episode_finished = len(reward_trajs_split)
 
                 # Compute episode returns
-                discounted_reward_trajs_split = [
-                    [
-                        self.gamma**t * r
-                        for t, r in zip(
-                            list(range(end - start + 1)),
-                            reward_trajs[start : end + 1, env_ind],
-                        )
-                    ]
-                    for env_ind, start, end in episodes_start_end
-                ]
                 returns_trajs_split = [
-                    np.cumsum(y[::-1])[::-1] for y in discounted_reward_trajs_split
+                    np.zeros_like(reward_trajs) for reward_trajs in reward_trajs_split
                 ]
+                for traj_rewards, traj_returns in zip(
+                    reward_trajs_split, returns_trajs_split
+                ):
+                    prev_return = 0
+                    for t in range(len(traj_rewards)):
+                        traj_returns[-t - 1] = (
+                            traj_rewards[-t - 1] + self.gamma * prev_return
+                        )
+                        prev_return = traj_returns[-t - 1]
+
+                # Note: concatenation is okay here since we are concatenating
+                # states and actions later on, in the same order
                 returns_trajs_split = np.concatenate(returns_trajs_split)
+
                 episode_reward = np.array(
                     [np.sum(reward_traj) for reward_traj in reward_trajs_split]
                 )
@@ -195,7 +195,6 @@ class TrainRWRDiffusionAgent(TrainAgent):
 
             # Update models
             if not eval_mode:
-
                 # Tensorize data and put them to device
                 # k for environment step
                 obs_k = {
@@ -230,7 +229,6 @@ class TrainRWRDiffusionAgent(TrainAgent):
                 total_steps = len(rewards_k_scaled)
                 inds_k = np.arange(total_steps)
                 for _ in range(self.update_epochs):
-
                     # for each epoch, go through all data in batches
                     np.random.shuffle(inds_k)
                     num_batch = max(1, total_steps // self.batch_size)  # skip last ones
