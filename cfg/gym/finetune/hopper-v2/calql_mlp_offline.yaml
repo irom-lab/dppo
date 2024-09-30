@@ -10,7 +10,7 @@ logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
-device: cuda:0
+device: cuda:5
 env_name: hopper-medium-v2
 obs_dim: 11
 action_dim: 3
@@ -71,9 +71,9 @@ train:
   buffer_size: 1000000
   n_eval_episode: 10
   n_explore_steps: 0
-  update_freq: 2
   target_entropy: ${eval:'- ${action_dim} * ${act_steps} / 2'}
-  init_temperature: 1
+  init_temperature: 1.0
+  automatic_entropy_tuning: True
 
 model:
   _target_: model.rl.gaussian_calql.CalQL_Gaussian
@@ -87,8 +87,9 @@ model:
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
-    # fixed_std: 0.1
-    # dropout: 0.5
+    std_max: 7.3891
+    std_min: 0.0067
+    tanh_output: False
   critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]
