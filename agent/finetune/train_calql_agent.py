@@ -22,6 +22,7 @@ from util.scheduler import CosineAnnealingWarmupRestarts
 class TrainCalQLAgent(TrainAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
+        assert self.n_envs == 1, "Cal-QL only supports single env for now"
 
         # Train mode (offline or online)
         self.train_online = cfg.train.train_online
@@ -76,6 +77,14 @@ class TrainCalQLAgent(TrainAgent):
 
         # Buffer size
         self.buffer_size = cfg.train.buffer_size
+
+        # Online only configs
+        if self.train_online:
+            # number of episode to colect per epoch for training
+            self.n_episode_per_epoch = cfg.train.n_episode_per_epoch
+            
+            # UTD ratio
+            self.online_utd_ratio = cfg.train.online_utd_ratio
 
         # Eval episodes
         self.n_eval_episode = cfg.train.n_eval_episode
@@ -149,12 +158,13 @@ class TrainCalQLAgent(TrainAgent):
                 and self.itr >= self.n_explore_steps
                 and not self.force_train
             )
+            # during eval, we collect a fixed number of episodes, so we set n_steps to a large value
             if eval_mode:
                 n_steps = int(1e5)
             elif not self.train_online:
                 n_steps = 0
             else:
-                n_steps = self.n_steps
+                n_steps = int(1e5)  # use episodes
             self.model.eval() if eval_mode else self.model.train()
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) at the beginning
@@ -166,13 +176,12 @@ class TrainCalQLAgent(TrainAgent):
                 # if done at the end of last iteration, then the envs are just reset
                 firsts_trajs = np.vstack((firsts_trajs, done_venv))
             reward_trajs = np.empty((0, self.n_envs))
-            done_trajs = np.empty((0, self.n_envs))
 
             # Collect a set of trajectories from env
             cnt_episode = 0
             for env_step in range(n_steps):
                 if env_step % 100 == 0:
-                    print(f"Completed environment step {env_step} of {n_steps}")
+                    print(f"Completed environment step {env_step}")
 
                 # Select action
                 if self.itr < self.n_explore_steps:
@@ -200,8 +209,6 @@ class TrainCalQLAgent(TrainAgent):
                 )
                 reward_trajs = np.vstack((reward_trajs, reward_venv))
                 firsts_trajs = np.vstack((firsts_trajs, done_venv))
-                # TODO: use firsts_traj only
-                done_trajs = np.vstack((done_trajs, done_venv))
                 terminated_venv = done_venv.copy()
 
                 # add to buffer in train mode
@@ -222,12 +229,14 @@ class TrainCalQLAgent(TrainAgent):
                 cnt_episode += np.sum(done_venv)
                 if eval_mode and cnt_episode >= self.n_eval_episode:
                     break
+                if not eval_mode and cnt_episode >= self.n_episode_per_epoch:
+                    break
 
             # compute reward-to-go (assume self.n_envs == 1)
             if not eval_mode:
                 reward_to_go = np.zeros_like(reward_trajs)
-                traj_lengths = np.where(done_trajs == 1)[0]
-                traj_lengths = np.diff(np.concatenate(([-1], traj_lengths)))
+                env_steps = np.where(firsts_trajs[:, env_ind] == 1)[0]
+                traj_lengths = np.diff(env_steps)
                 cumulative_traj_length = np.cumsum(traj_lengths)
                 prev_traj_length = 0
                 for i, traj_length in enumerate(cumulative_traj_length):
@@ -241,8 +250,8 @@ class TrainCalQLAgent(TrainAgent):
                         prev_return = returns[-t - 1]
                     # Assign the computed returns back to the reward_to_go array
                     reward_to_go[prev_traj_length:traj_length, 0] = returns
-                    # TODO: only work for a single env?
                     prev_traj_length = traj_length
+                # TODO: only work for a single env?
 
                 # add reward-to-go to buffer
                 for i in range(self.n_envs):
@@ -295,8 +304,12 @@ class TrainCalQLAgent(TrainAgent):
                     reward_to_go_array = np.array(reward_to_go_buffer)
                     terminated_array = np.array(terminated_buffer)
 
-                # Update critic more frequently
-                for _ in range(self.num_update):
+                # override num_update
+                if self.train_online:
+                    num_update = np.sum(cumulative_traj_length)
+                else:
+                    num_update = self.num_update
+                for _ in range(num_update):
 
                     # Sample from OFFLINE buffer
                     inds = np.random.choice(

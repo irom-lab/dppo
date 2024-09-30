@@ -20,13 +20,14 @@ class CalQL_Gaussian(GaussianModel):
         self,
         actor,
         critic,
+        network_path=None,
         cql_clip_diff_min=-np.inf,
         cql_clip_diff_max=np.inf,
         cql_min_q_weight=5.0,
         cql_n_actions=10,
         **kwargs,
     ):
-        super().__init__(network=actor, **kwargs)
+        super().__init__(network=actor, network_path=None, **kwargs)
         self.cql_clip_diff_min = cql_clip_diff_min
         self.cql_clip_diff_max = cql_clip_diff_max
         self.cql_min_q_weight = cql_min_q_weight
@@ -35,6 +36,22 @@ class CalQL_Gaussian(GaussianModel):
         # initialize critic networks
         self.critic = critic.to(self.device)
         self.target_critic = deepcopy(critic).to(self.device)
+
+        # Load pre-trained checkpoint - note we are also loading the pre-trained critic here
+        if network_path is not None:
+            checkpoint = torch.load(
+                network_path,
+                map_location=self.device,
+                weights_only=True,
+            )
+            self.load_state_dict(
+                checkpoint["model"],
+                strict=True,
+            )
+            log.info("Loaded actor from %s", network_path)
+        log.info(
+            f"Number of network parameters: {sum(p.numel() for p in self.parameters())}"
+        )
 
     def loss_critic(
         self,
