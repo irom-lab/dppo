@@ -11,7 +11,7 @@ base_policy_path: ${oc.env:DPPO_LOG_DIR}/gym-finetune/hopper-medium-v2_calql_mlp
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
-device: cuda:0
+device: cuda:5
 env_name: hopper-medium-v2
 obs_dim: 11
 action_dim: 3
@@ -68,7 +68,7 @@ train:
   n_random_actions: 4
   target_ema_rate: 0.005       
   scale_reward_factor: 1.0
-  num_update: 1
+  num_update: 1000
   buffer_size: 1000000
   n_eval_episode: 10
   n_explore_steps: 0
@@ -81,7 +81,6 @@ model:
   randn_clip_value: 3
   cql_min_q_weight: 5.0
   tanh_output: True
-  actor_critic_path: ${base_policy_path}
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [256, 256]
@@ -89,8 +88,9 @@ model:
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${action_dim}
-    # fixed_std: 0.1
-    # dropout: 0.5
+    std_max: 7.3891
+    std_min: 0.0067
+    tanh_output: False
   critic:
     _target_: model.common.critic.CriticObsAct
     mlp_dims: [256, 256]

@@ -202,17 +202,13 @@ class StitchedSequenceQLearningDataset(StitchedSequenceDataset):
                 enumerate(cumulative_traj_length), desc="Computing reward-to-go"
             ):
                 traj_rewards = self.rewards[prev_traj_length:traj_length]
-
-                # compute discounted returns using accumulate and reverse
-                returns = torch.tensor(
-                    list(
-                        accumulate(
-                            reversed(traj_rewards),
-                            lambda x, y: y + self.discount_factor * x,
-                        )
-                    )[::-1]
-                )
-
+                returns = torch.zeros_like(traj_rewards)
+                prev_return = 0
+                for t in range(len(traj_rewards)):
+                    returns[-t - 1] = (
+                        traj_rewards[-t - 1] + self.discount_factor * prev_return
+                    )
+                    prev_return = returns[-t - 1]
                 self.reward_to_go[prev_traj_length:traj_length] = returns
                 prev_traj_length = traj_length
             log.info(f"Computed reward-to-go for each trajectory.")

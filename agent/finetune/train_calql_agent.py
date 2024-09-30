@@ -1,7 +1,7 @@
 """
 Reinforcement Learning with Prior Data (RLPD) agent training script.
 
-Does not support image observations right now. 
+Does not support image observations right now.
 """
 
 import os
@@ -12,7 +12,6 @@ import logging
 import wandb
 import hydra
 from collections import deque
-from itertools import accumulate
 
 log = logging.getLogger(__name__)
 from util.timer import Timer
@@ -29,13 +28,6 @@ class TrainCalQLAgent(TrainAgent):
 
         # Build dataset
         self.dataset_offline = hydra.utils.instantiate(cfg.offline_dataset)
-        self.dataloader_offline = torch.utils.data.DataLoader(
-            self.dataset_offline,
-            batch_size=self.batch_size // 2 if self.train_online else self.batch_size,
-            num_workers=4 if self.dataset_offline.device == "cpu" else 0,
-            shuffle=True,
-            pin_memory=True if self.dataset_offline.device == "cpu" else False,
-        )
 
         # note the discount factor gamma here is applied to reward every act_steps, instead of every env step
         self.gamma = cfg.train.gamma
@@ -56,7 +48,6 @@ class TrainCalQLAgent(TrainAgent):
             gamma=1.0,
         )
         self.critic_optimizer = torch.optim.AdamW(
-            # self.model.critic_networks.parameters(),
             self.model.critic.parameters(),
             lr=cfg.train.critic_lr,
             weight_decay=cfg.train.critic_weight_decay,
@@ -96,7 +87,7 @@ class TrainCalQLAgent(TrainAgent):
         init_temperature = cfg.train.init_temperature
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
         self.log_alpha.requires_grad = True
-        # set target entropy to -|A|/2
+        self.automatic_entropy_tuning = cfg.train.automatic_entropy_tuning
         self.target_entropy = cfg.train.target_entropy
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha],
@@ -110,14 +101,38 @@ class TrainCalQLAgent(TrainAgent):
         action_buffer = deque(maxlen=self.buffer_size)
         reward_buffer = deque(maxlen=self.buffer_size)
         reward_to_go_buffer = deque(maxlen=self.buffer_size)
-        done_buffer = deque(maxlen=self.buffer_size)
+        terminated_buffer = deque(maxlen=self.buffer_size)
+        if not self.train_online:
+            obs_array = np.array(obs_buffer)
+            next_obs_array = np.array(next_obs_buffer)
+            actions_array = np.array(action_buffer)
+            rewards_array = np.array(reward_buffer)
+            reward_to_go_array = np.array(reward_to_go_buffer)
+            terminated_array = np.array(terminated_buffer)
+
+        # load offline dataset into replay buffer
+        dataloader_offline = torch.utils.data.DataLoader(
+            self.dataset_offline,
+            batch_size=len(self.dataset_offline),
+            drop_last=False,
+        )
+        for batch in dataloader_offline:
+            actions, states_and_next, rewards, terminated, reward_to_go = batch
+            states = states_and_next["state"]
+            next_states = states_and_next["next_state"]
+            obs_buffer_off = states.cpu().numpy()
+            next_obs_buffer_off = next_states.cpu().numpy()
+            action_buffer_off = actions.cpu().numpy()
+            reward_buffer_off = rewards.cpu().numpy().flatten()
+            reward_to_go_buffer_off = reward_to_go.cpu().numpy().flatten()
+            terminated_buffer_off = terminated.cpu().numpy().flatten()
 
         # Start training loop
         timer = Timer()
         run_results = []
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
-            if self.itr % 100 == 0:
+            if self.itr % 1000 == 0:
                 print(f"Finished training iteration {self.itr} of {self.n_train_itr}")
 
             # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
@@ -134,9 +149,12 @@ class TrainCalQLAgent(TrainAgent):
                 and self.itr >= self.n_explore_steps
                 and not self.force_train
             )
-            n_steps = (
-                self.n_steps if not eval_mode else int(1e5)
-            )  # large number for eval mode
+            if eval_mode:
+                n_steps = int(1e5)
+            elif not self.train_online:
+                n_steps = 0
+            else:
+                n_steps = self.n_steps
             self.model.eval() if eval_mode else self.model.train()
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) at the beginning
@@ -153,9 +171,6 @@ class TrainCalQLAgent(TrainAgent):
             # Collect a set of trajectories from env
             cnt_episode = 0
             for env_step in range(n_steps):
-                if not self.train_online and not eval_mode:
-                    break
-
                 if env_step % 100 == 0:
                     print(f"Completed environment step {env_step} of {n_steps}")
 
@@ -183,8 +198,11 @@ class TrainCalQLAgent(TrainAgent):
                 obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
                     action_venv
                 )
-                reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
-                done_trajs = np.vstack((done_trajs, done_venv[None]))
+                reward_trajs = np.vstack((reward_trajs, reward_venv))
+                firsts_trajs = np.vstack((firsts_trajs, done_venv))
+                # TODO: use firsts_traj only
+                done_trajs = np.vstack((done_trajs, done_venv))
+                terminated_venv = done_venv.copy()
 
                 # add to buffer in train mode
                 if not eval_mode:
@@ -198,9 +216,6 @@ class TrainCalQLAgent(TrainAgent):
                         action_buffer.append(action_venv[i])
                         reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
                         terminated_buffer.append(terminated_venv[i])
-                firsts_trajs = np.vstack(
-                    (firsts_trajs, done_venv)
-                )  # offset by one step
                 prev_obs_venv = obs_venv
 
                 # check if enough eval episodes are done
@@ -209,27 +224,27 @@ class TrainCalQLAgent(TrainAgent):
                     break
 
             # compute reward-to-go (assume self.n_envs == 1)
-            reward_to_go = np.zeros_like(reward_trajs)
-            traj_lengths = np.where(done_trajs == 1)[0]
-            traj_lengths = np.diff(
-                np.concatenate(([-1], traj_lengths, [len(done_trajs) - 1]))
-            )
-            cumulative_traj_length = np.cumsum(traj_lengths)
-            prev_traj_length = 0
-            for i, traj_length in enumerate(cumulative_traj_length):
-                traj_rewards = reward_trajs[prev_traj_length:traj_length, 0]
-
-                # Compute discounted returns using accumulate and reverse
-                returns = list(
-                    accumulate(reversed(traj_rewards), lambda x, y: y + self.gamma * x)
-                )[::-1]
-
-                # Assign the computed returns back to the reward_to_go array
-                reward_to_go[prev_traj_length:traj_length, 0] = returns
-                prev_traj_length = traj_length
-
-            # add reward-to-go to buffer
             if not eval_mode:
+                reward_to_go = np.zeros_like(reward_trajs)
+                traj_lengths = np.where(done_trajs == 1)[0]
+                traj_lengths = np.diff(np.concatenate(([-1], traj_lengths)))
+                cumulative_traj_length = np.cumsum(traj_lengths)
+                prev_traj_length = 0
+                for i, traj_length in enumerate(cumulative_traj_length):
+                    traj_rewards = reward_trajs[prev_traj_length:traj_length, 0]
+                    returns = np.zeros_like(traj_rewards)
+                    prev_return = 0
+                    for t in range(len(traj_rewards)):
+                        returns[-t - 1] = (
+                            traj_rewards[-t - 1] + self.gamma * prev_return
+                        )
+                        prev_return = returns[-t - 1]
+                    # Assign the computed returns back to the reward_to_go array
+                    reward_to_go[prev_traj_length:traj_length, 0] = returns
+                    # TODO: only work for a single env?
+                    prev_traj_length = traj_length
+
+                # add reward-to-go to buffer
                 for i in range(self.n_envs):
                     reward_to_go_buffer.extend(reward_to_go[:, i])
 
@@ -270,31 +285,52 @@ class TrainCalQLAgent(TrainAgent):
                 success_rate = 0
 
             # Update models
-            if not eval_mode and self.itr > self.n_explore_steps:
-                obs_array = np.array(obs_buffer)
-                next_obs_array = np.array(next_obs_buffer)
-                actions_array = np.array(action_buffer)
-                rewards_array = np.array(reward_buffer)
-                dones_array = np.array(done_buffer)
-                reward_to_go_array = np.array(reward_to_go_buffer)
+            if not eval_mode and self.itr >= self.n_explore_steps:
+                # TODO: is this slow in online?
+                if self.train_online:
+                    obs_array = np.array(obs_buffer)
+                    next_obs_array = np.array(next_obs_buffer)
+                    actions_array = np.array(action_buffer)
+                    rewards_array = np.array(reward_buffer)
+                    reward_to_go_array = np.array(reward_to_go_buffer)
+                    terminated_array = np.array(terminated_buffer)
 
                 # Update critic more frequently
-                dataloader_iterator = iter(self.dataloader_offline)
                 for _ in range(self.num_update):
+
                     # Sample from OFFLINE buffer
-                    try:
-                        batch_offline = next(dataloader_iterator)
-                    except StopIteration:
-                        dataloader_iterator = iter(self.dataloader_offline)
-                        batch_offline = next(dataloader_iterator)
-                    obs_b = batch_offline.conditions["state"]
-                    next_obs_b = batch_offline.conditions["next_state"]
-                    actions_b = batch_offline.actions
-                    rewards_b = (
-                        batch_offline.rewards.flatten() * self.scale_reward_factor
+                    inds = np.random.choice(
+                        len(obs_buffer_off),
+                        self.batch_size // 2 if self.train_online else self.batch_size,
                     )
-                    dones_b = batch_offline.dones.flatten()
-                    reward_to_go_b = batch_offline.reward_to_gos.flatten()
+                    obs_b = (
+                        torch.from_numpy(obs_buffer_off[inds]).float().to(self.device)
+                    )
+                    next_obs_b = (
+                        torch.from_numpy(next_obs_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    actions_b = (
+                        torch.from_numpy(action_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    rewards_b = (
+                        torch.from_numpy(reward_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    terminated_b = (
+                        torch.from_numpy(terminated_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
+                    reward_to_go_b = (
+                        torch.from_numpy(reward_to_go_buffer_off[inds])
+                        .float()
+                        .to(self.device)
+                    )
 
                     # Sample from ONLINE buffer
                     if self.train_online:
@@ -317,8 +353,10 @@ class TrainCalQLAgent(TrainAgent):
                             .float()
                             .to(self.device)
                         )
-                        dones_b_on = (
-                            torch.from_numpy(dones_array[inds]).float().to(self.device)
+                        terminated_b_on = (
+                            torch.from_numpy(terminated_array[inds])
+                            .float()
+                            .to(self.device)
                         )
                         reward_to_go_b_on = (
                             torch.from_numpy(reward_to_go_array[inds])
@@ -331,20 +369,27 @@ class TrainCalQLAgent(TrainAgent):
                         next_obs_b = torch.cat([next_obs_b, next_obs_b_on], dim=0)
                         actions_b = torch.cat([actions_b, actions_b_on], dim=0)
                         rewards_b = torch.cat([rewards_b, rewards_b_on], dim=0)
-                        dones_b = torch.cat([dones_b, dones_b_on], dim=0)
+                        terminated_b = torch.cat([terminated_b, terminated_b_on], dim=0)
                         reward_to_go_b = torch.cat(
                             [reward_to_go_b, reward_to_go_b_on], dim=0
                         )
 
                     # Get a random action for Cal-QL
-                    # TODO: we employ efficient torch sampling here; check consistency with action space
-                    random_actions = torch.rand(
-                        (self.n_random_actions, self.batch_size, 1, self.action_dim)
-                    ).to(self.device)
-                    random_actions = random_actions * 2 - 1  # scale to [-1, 1]
+                    random_actions = (
+                        torch.rand(
+                            (
+                                self.batch_size,
+                                self.n_random_actions,
+                                self.horizon_steps,
+                                self.action_dim,
+                            )
+                        ).to(self.device)
+                        * 2
+                        - 1
+                    )  # scale to [-1, 1]
 
                     # Update critic
-                    entropy_temperature = self.log_alpha.exp()
+                    alpha = self.log_alpha.exp().item()
                     loss_critic = self.model.loss_critic(
                         {"state": obs_b},
                         {"state": next_obs_b},
@@ -352,9 +397,9 @@ class TrainCalQLAgent(TrainAgent):
                         random_actions,
                         rewards_b,
                         reward_to_go_b,
-                        dones_b,
+                        terminated_b,
                         self.gamma,
-                        entropy_temperature.detach(),
+                        alpha,
                     )
                     self.critic_optimizer.zero_grad()
                     loss_critic.backward()
@@ -366,21 +411,22 @@ class TrainCalQLAgent(TrainAgent):
                     # Update actor
                     loss_actor = self.model.loss_actor(
                         {"state": obs_b},
-                        entropy_temperature.detach(),
+                        alpha,
                     )
                     self.actor_optimizer.zero_grad()
                     loss_actor.backward()
                     self.actor_optimizer.step()
 
                     # Update temperature parameter
-                    self.log_alpha_optimizer.zero_grad()
-                    loss_alpha = self.model.loss_temperature(
-                        {"state": obs_b},
-                        entropy_temperature,
-                        self.target_entropy,
-                    )
-                    loss_alpha.backward()
-                    self.log_alpha_optimizer.step()
+                    if self.automatic_entropy_tuning:
+                        self.log_alpha_optimizer.zero_grad()
+                        loss_alpha = self.model.loss_temperature(
+                            {"state": obs_b},
+                            self.log_alpha.exp(),  # with grad
+                            self.target_entropy,
+                        )
+                        loss_alpha.backward()
+                        self.log_alpha_optimizer.step()
 
             # Update lr
             self.actor_lr_scheduler.step()
@@ -414,14 +460,14 @@ class TrainCalQLAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {entropy_temperature:8.4f} | t:{time:8.4f}"
+                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {alpha:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
                             {
                                 "loss - actor": loss_actor,
                                 "loss - critic": loss_critic,
-                                "entropy coeff": entropy_temperature,
+                                "entropy coeff": alpha,
                                 "avg episode reward - train": avg_episode_reward,
                                 "num episode - train": num_episode_finished,
                             },
