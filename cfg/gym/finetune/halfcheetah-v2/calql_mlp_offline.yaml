@@ -36,7 +36,7 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: calql-gym-${env_name}-finetune
+  project: calql-${env_name}
   run: ${now:%H-%M-%S}_${name}
 
 train:

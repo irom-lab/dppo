@@ -130,7 +130,7 @@ class TrainRLPDAgent(TrainAgent):
             # Define train or eval - all envs restart
             eval_mode = (
                 self.itr % self.val_freq == 0
-                and self.itr > self.n_explore_steps
+                and self.itr >= self.n_explore_steps
                 and not self.force_train
             )
             n_steps = (
@@ -236,7 +236,7 @@ class TrainRLPDAgent(TrainAgent):
                 success_rate = 0
 
             # Update models
-            if not eval_mode and self.itr > self.n_explore_steps:
+            if not eval_mode and self.itr >= self.n_explore_steps:
 
                 # Update critic more frequently
                 for _ in range(self.critic_num_update):

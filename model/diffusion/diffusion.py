@@ -228,7 +228,7 @@ class DiffusionModel(nn.Module):
         return mu, logvar
 
     @torch.no_grad()
-    def forward(self, cond):
+    def forward(self, cond, deterministic=True):
         """
         Forward pass for sampling actions. Used in evaluating pre-trained/fine-tuned policy. Not modifying diffusion clipping
 
