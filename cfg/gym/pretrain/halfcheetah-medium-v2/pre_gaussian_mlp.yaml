@@ -10,26 +10,26 @@ logdir: ${oc.env:DPPO_LOG_DIR}/gym-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-
 train_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env}/train.npz
 
 seed: 42
-device: cuda:1
+device: cuda:0
 env: halfcheetah-medium-v2
 obs_dim: 17
 action_dim: 6
 transition_dim: ${action_dim}
-horizon_steps: 4
+horizon_steps: 1
 cond_steps: 1
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: gym-${env}-pretrain-gaussian
+  project: gym-${env}-pretrain
   run: ${now:%H-%M-%S}_${name}
 
 train:
-  n_epochs: 3000
+  n_epochs: 500
   batch_size: 128
   learning_rate: 1e-4
   weight_decay: 1e-6
   lr_scheduler:
-    first_cycle_steps: 3000
+    first_cycle_steps: 1000
     warmup_steps: 1
     min_lr: 1e-4
   epoch_start_ema: 10
@@ -40,13 +40,12 @@ model:
   _target_: model.common.gaussian.GaussianModel
   network:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
-    mlp_dims: [256, 256]
-    activation_type: ReLU
-    residual_style: False
+    mlp_dims: [256, 256, 256]
+    activation_type: Mish
+    fixed_std: 0.1
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
     transition_dim: ${transition_dim}
-    fixed_std: 0.1
   horizon_steps: ${horizon_steps}
   device: ${device}
 
