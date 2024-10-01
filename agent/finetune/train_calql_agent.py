@@ -302,7 +302,7 @@ class TrainCalQLAgent(TrainAgent):
 
                 # override num_update
                 if self.train_online:
-                    num_update = np.sum(cumulative_traj_length)
+                    num_update = len(reward_trajs)  # assume one env!
                 else:
                     num_update = self.num_update
                 for _ in range(num_update):
