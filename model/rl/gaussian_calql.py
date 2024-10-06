@@ -61,7 +61,7 @@ class CalQL_Gaussian(GaussianModel):
         random_actions,
         rewards,
         returns,
-        dones,
+        terminated,
         gamma,
         alpha,
     ):
@@ -94,7 +94,7 @@ class CalQL_Gaussian(GaussianModel):
             next_logprobs = next_logprobs[torch.arange(B), max_idx]
 
             # Get the target Q values
-            target_q = rewards + gamma * (1 - dones) * next_q
+            target_q = rewards + gamma * (1 - terminated) * next_q
 
             # Subtract the entropy bonus
             target_q = target_q - alpha * next_logprobs

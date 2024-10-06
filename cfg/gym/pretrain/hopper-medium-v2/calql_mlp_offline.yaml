@@ -6,10 +6,11 @@ hydra:
 _target_: agent.finetune.train_calql_agent.TrainCalQLAgent
 
 name: ${env_name}_calql_mlp_ta${horizon_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
+seed: 42
 device: cuda:0
 env_name: hopper-medium-v2
 obs_dim: 11
@@ -87,7 +88,7 @@ model:
     tanh_output: False  # squash after sampling instead
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${action_dim}
+    
     std_max: 7.3891
     std_min: 0.0067
   critic:

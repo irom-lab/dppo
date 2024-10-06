@@ -1,7 +1,10 @@
 """
 From gym==0.22.0
 
-Disable auto-reset after done.
+Use terminated/truncated instead of done.
+
+Disable auto-reset after done. Reset in MultiStepWrapper instead.
+
 Add reset_arg() that allows all environments with different options.
 Add reset_one_arg() that allows resetting a single environment with options.
 Add render().
@@ -398,8 +401,11 @@ class AsyncVectorEnv(VectorEnv):
         rewards : :obj:`np.ndarray`, dtype :obj:`np.float_`
             A vector of rewards from the vectorized environment.
 
-        dones : :obj:`np.ndarray`, dtype :obj:`np.bool_`
-            A vector whose entries indicate whether the episode has ended.
+        terminates : :obj:`np.ndarray`, dtype :obj:`np.bool_`
+            A vector whose entries indicate whether the episode has terminated (failed).
+
+        truncates : :obj:`np.ndarray`, dtype :obj:`np.bool_`
+            A vector whose entries indicate whether the episode has been truncated (max episode length).
 
         infos : list of dict
             A list of auxiliary diagnostic information dicts from sub-environments.
@@ -432,7 +438,7 @@ class AsyncVectorEnv(VectorEnv):
         results, successes = zip(*[pipe.recv() for pipe in self.parent_pipes])
         self._raise_if_errors(successes)
         self._state = AsyncState.DEFAULT
-        observations_list, rewards, dones, infos = zip(*results)
+        observations_list, rewards, terminates, truncates, infos = zip(*results)
 
         if not self.shared_memory:
             self.observations = concatenate(
@@ -444,7 +450,8 @@ class AsyncVectorEnv(VectorEnv):
         return (
             deepcopy(self.observations) if self.copy else self.observations,
             np.array(rewards),
-            np.array(dones, dtype=np.bool_),
+            np.array(terminates, dtype=np.bool_),
+            np.array(truncates, dtype=np.bool_),
             infos,
         )
 
@@ -717,11 +724,8 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
                     pipe.send((observation, True))
 
             elif command == "step":
-                observation, reward, done, info = env.step(data)
-                # if done:
-                #     info["terminal_observation"] = observation
-                #     observation = env.reset()
-                pipe.send(((observation, reward, done, info), True))
+                observation, reward, terminated, truncated, info = env.step(data)
+                pipe.send(((observation, reward, terminated, truncated, info), True))
             elif command == "seed":
                 env.seed(data)
                 pipe.send((None, True))
@@ -789,14 +793,11 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
                     )
                     pipe.send((None, True))
             elif command == "step":
-                observation, reward, done, info = env.step(data)
-                # if done:
-                #     info["terminal_observation"] = observation
-                #     observation = env.reset()
+                observation, reward, terminated, truncated, info = env.step(data)
                 write_to_shared_memory(
                     observation_space, index, observation, shared_memory
                 )
-                pipe.send(((None, reward, done, info), True))
+                pipe.send(((None, reward, terminated, truncated, info), True))
             elif command == "seed":
                 env.seed(data)
                 pipe.send((None, True))

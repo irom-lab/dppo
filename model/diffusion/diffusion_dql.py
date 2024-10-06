@@ -6,6 +6,7 @@ Diffusion Q-Learning (DQL)
 import torch
 import logging
 import numpy as np
+import copy
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ class DQLDiffusion(DiffusionModel):
         assert not self.use_ddim, "DQL does not support DDIM"
         self.critic = critic.to(self.device)
 
+        # target critic
+        self.critic_target = copy.deepcopy(self.critic)
+
         # reassign actor
         self.actor = self.network
 
@@ -36,45 +40,60 @@ class DQLDiffusion(DiffusionModel):
 
     # ---------- RL training ----------#
 
-    def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma):
+    def loss_critic(self, obs, next_obs, actions, rewards, terminated, gamma):
 
         # get current Q-function
         current_q1, current_q2 = self.critic(obs, actions)
 
         # get next Q-function
-        next_actions = self.forward(
-            cond=next_obs,
-            deterministic=False,
-        )  # forward() has no gradient, which is desired here.
-        next_q1, next_q2 = self.critic(next_obs, next_actions)
-        next_q = torch.min(next_q1, next_q2)
+        with torch.no_grad():
+            next_actions = self.forward(
+                cond=next_obs,
+                deterministic=False,
+            )  # forward() has no gradient, which is desired here.
+            next_q1, next_q2 = self.critic_target(next_obs, next_actions)
+            next_q = torch.min(next_q1, next_q2)
 
-        # terminal state mask
-        mask = 1 - dones
+            # terminal state mask
+            mask = 1 - terminated
 
-        # flatten
-        rewards = rewards.view(-1)
-        next_q = next_q.view(-1)
-        mask = mask.view(-1)
+            # flatten
+            rewards = rewards.view(-1)
+            next_q = next_q.view(-1)
+            mask = mask.view(-1)
 
-        # target value
-        target_q = rewards + gamma * next_q * mask
+            # target value
+            target_q = rewards + gamma * next_q * mask
 
         # Update critic
         loss_critic = torch.mean((current_q1 - target_q) ** 2) + torch.mean(
             (current_q2 - target_q) ** 2
         )
-
         return loss_critic
 
-    def loss_actor(self, obs, actions, q1, q2, eta):
-        bc_loss = self.loss(actions, obs)
+    def loss_actor(self, obs, eta, act_steps):
+        action_new = self.forward_train(
+            cond=obs,
+            deterministic=False,
+        )[
+            :, :act_steps
+        ]  # with gradient
+        q1, q2 = self.critic(obs, action_new)
+        bc_loss = self.loss(action_new, obs)
         if np.random.uniform() > 0.5:
             q_loss = -q1.mean() / q2.abs().mean().detach()
         else:
             q_loss = -q2.mean() / q1.abs().mean().detach()
         actor_loss = bc_loss + eta * q_loss
         return actor_loss
+
+    def update_target_critic(self, tau):
+        for target_param, source_param in zip(
+            self.critic_target.parameters(), self.critic.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )
 
     # ---------- Sampling ----------#``
 

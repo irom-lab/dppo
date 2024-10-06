@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class Gaussian_Transformer(nn.Module):
     def __init__(
         self,
-        transition_dim,
+        action_dim,
         horizon_steps,
         cond_dim,
         transformer_embed_dim=256,
@@ -32,16 +32,16 @@ class Gaussian_Transformer(nn.Module):
     ):
 
         super().__init__()
-        self.transition_dim = transition_dim
+        self.action_dim = action_dim
         self.horizon_steps = horizon_steps
-        output_dim = transition_dim
+        output_dim = action_dim
 
         if fixed_std is None:  # learn the logvar
             output_dim *= 2  # mean and logvar
             logger.info("Using learned std")
         elif learn_fixed_std:  # learn logvar
             self.logvar = torch.nn.Parameter(
-                torch.log(torch.tensor([fixed_std**2 for _ in range(transition_dim)])),
+                torch.log(torch.tensor([fixed_std**2 for _ in range(action_dim)])),
                 requires_grad=True,
             )
             logger.info(f"Using fixed std {fixed_std} with learning")
@@ -81,19 +81,19 @@ class Gaussian_Transformer(nn.Module):
         out, _ = self.transformer(state)  # (B,horizon,output_dim)
 
         # use the first half of the output as mean
-        out_mean = torch.tanh(out[:, :, : self.transition_dim])
-        out_mean = out_mean.view(B, self.horizon_steps * self.transition_dim)
+        out_mean = torch.tanh(out[:, :, : self.action_dim])
+        out_mean = out_mean.view(B, self.horizon_steps * self.action_dim)
 
         if self.learn_fixed_std:
             out_logvar = torch.clamp(self.logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)
-            out_scale = out_scale.view(1, self.transition_dim)
+            out_scale = out_scale.view(1, self.action_dim)
             out_scale = out_scale.repeat(B, self.horizon_steps)
         elif self.fixed_std is not None:
             out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
-            out_logvar = out[:, :, self.transition_dim :]
-            out_logvar = out_logvar.reshape(B, self.horizon_steps * self.transition_dim)
+            out_logvar = out[:, :, self.action_dim :]
+            out_logvar = out_logvar.reshape(B, self.horizon_steps * self.action_dim)
             out_logvar = torch.clamp(out_logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)
         return out_mean, out_scale
@@ -102,7 +102,7 @@ class Gaussian_Transformer(nn.Module):
 class GMM_Transformer(nn.Module):
     def __init__(
         self,
-        transition_dim,
+        action_dim,
         horizon_steps,
         cond_dim,
         num_modes=5,
@@ -120,13 +120,12 @@ class GMM_Transformer(nn.Module):
 
         super().__init__()
         self.num_modes = num_modes
-        self.transition_dim = transition_dim
+        self.action_dim = action_dim
         self.horizon_steps = horizon_steps
-        output_dim = transition_dim * num_modes
-        # + num_modes  # mean and modes
+        output_dim = action_dim * num_modes
 
         if fixed_std is None:
-            output_dim += num_modes * transition_dim  # logvar for each mode
+            output_dim += num_modes * action_dim  # logvar for each mode
             logger.info("Using learned std")
         elif (
             learn_fixed_std
@@ -134,7 +133,7 @@ class GMM_Transformer(nn.Module):
             self.logvar = torch.nn.Parameter(
                 torch.log(
                     torch.tensor(
-                        [fixed_std**2 for _ in range(num_modes * transition_dim)]
+                        [fixed_std**2 for _ in range(num_modes * action_dim)]
                     )
                 ),
                 requires_grad=True,
@@ -179,32 +178,32 @@ class GMM_Transformer(nn.Module):
         )  # (B,horizon,output_dim), (B,horizon,emb_dim)
 
         # use the first half of the output as mean
-        out_mean = torch.tanh(out[:, :, : self.num_modes * self.transition_dim])
+        out_mean = torch.tanh(out[:, :, : self.num_modes * self.action_dim])
         out_mean = out_mean.reshape(
-            B, self.horizon_steps, self.num_modes, self.transition_dim
+            B, self.horizon_steps, self.num_modes, self.action_dim
         )
         out_mean = out_mean.permute(0, 2, 1, 3)  # flip horizons and modes
         out_mean = out_mean.reshape(
-            B, self.num_modes, self.horizon_steps * self.transition_dim
+            B, self.num_modes, self.horizon_steps * self.action_dim
         )
 
         if self.learn_fixed_std:
             out_logvar = torch.clamp(self.logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)
-            out_scale = out_scale.view(1, self.num_modes, self.transition_dim)
+            out_scale = out_scale.view(1, self.num_modes, self.action_dim)
             out_scale = out_scale.repeat(B, 1, self.horizon_steps)
         elif self.fixed_std is not None:
             out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
             out_logvar = out[
-                :, :, self.num_modes * self.transition_dim : -self.num_modes
+                :, :, self.num_modes * self.action_dim : -self.num_modes
             ]
             out_logvar = out_logvar.reshape(
-                B, self.horizon_steps, self.num_modes, self.transition_dim
+                B, self.horizon_steps, self.num_modes, self.action_dim
             )
             out_logvar = out_logvar.permute(0, 2, 1, 3)  # flip horizons and modes
             out_logvar = out_logvar.reshape(
-                B, self.num_modes, self.horizon_steps * self.transition_dim
+                B, self.num_modes, self.horizon_steps * self.action_dim
             )
             out_logvar = torch.clamp(out_logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)

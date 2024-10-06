@@ -15,7 +15,6 @@ device: cuda:0
 env_name: ${env.specific.furniture}_${env.specific.randomness}_dim
 obs_dim: 58
 action_dim: 10
-transition_dim: ${action_dim}
 denoising_steps: 100
 cond_steps: 1
 horizon_steps: 8
@@ -59,7 +58,7 @@ model:
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}

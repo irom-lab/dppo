@@ -14,7 +14,6 @@ device: cuda:0
 env: transport
 obs_dim: 18  # proprioception only
 action_dim: 14
-transition_dim: ${action_dim}
 denoising_steps: 100
 horizon_steps: 8
 cond_steps: 1
@@ -73,7 +72,7 @@ model:
     img_cond_steps: ${img_cond_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}

@@ -14,7 +14,6 @@ device: cuda:0
 env: square
 obs_dim: 23
 action_dim: 7
-transition_dim: ${action_dim}
 denoising_steps: 20
 horizon_steps: 4
 cond_steps: 1
@@ -51,7 +50,7 @@ model:
     smaller_encoder: False
     cond_predict_scale: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}

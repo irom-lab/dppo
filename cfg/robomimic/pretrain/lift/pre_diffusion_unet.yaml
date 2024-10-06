@@ -14,7 +14,6 @@ device: cuda:0
 env: lift
 obs_dim: 19
 action_dim: 7
-transition_dim: ${action_dim}
 denoising_steps: 20
 horizon_steps: 4
 cond_steps: 1
@@ -50,7 +49,7 @@ model:
     n_groups: 8
     smaller_encoder: False
     cond_predict_scale: True
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}

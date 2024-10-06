@@ -14,15 +14,18 @@ import torch
 import logging
 
 log = logging.getLogger(__name__)
-from .diffusion_ppo import PPODiffusion
+from .diffusion_vpg import VPGDiffusion
 from .exact_likelihood import get_likelihood_fn
 
 
-class PPOExactDiffusion(PPODiffusion):
+class PPOExactDiffusion(VPGDiffusion):
 
     def __init__(
         self,
         sde,
+        clip_ploss_coef,
+        clip_vloss_coef=None,
+        norm_adv=True,
         sde_hutchinson_type="Rademacher",
         sde_rtol=1e-4,
         sde_atol=1e-4,
@@ -41,6 +44,9 @@ class PPOExactDiffusion(PPODiffusion):
             self.betas,
             sde_min_beta,
         )
+        self.clip_ploss_coef = clip_ploss_coef
+        self.clip_vloss_coef = clip_vloss_coef
+        self.norm_adv = norm_adv
 
         # set up likelihood function
         self.likelihood_fn = get_likelihood_fn(
@@ -62,7 +68,6 @@ class PPOExactDiffusion(PPODiffusion):
 
         samples: (B x Ta x Da)
         """
-        # TODO: image input
         return self.likelihood_fn(
             self.actor,
             self.actor_ft,

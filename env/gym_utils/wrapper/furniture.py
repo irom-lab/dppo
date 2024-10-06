@@ -121,7 +121,7 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
         action = self.normalizer(action, "actions", forward=False)
 
         # Step the environment n_action_steps times
-        obs, sparse_reward, dense_reward, done, info = self._inner_step(action)
+        obs, sparse_reward, dense_reward, info = self._inner_step(action)
         if self.sparse_reward:
             reward = sparse_reward.clone().cpu().numpy()
         else:
@@ -129,17 +129,14 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
 
         # Only mark the environment as done if it times out, ignore done from inner steps
         truncated = self.env.env_steps >= self.max_env_steps
-        done = truncated
 
         nobs: np.ndarray = self.process_obs(obs)
-        done: np.ndarray = done.squeeze().cpu().numpy()
+        truncated: np.ndarray = truncated.squeeze().cpu().numpy()
+        terminated: np.ndarray = np.zeros_like(truncated, dtype=bool)
 
-        return {"state": nobs}, reward, done, info
+        return {"state": nobs}, reward, terminated, truncated, info
 
     def _inner_step(self, action_chunk: torch.Tensor):
-        dones = torch.zeros(
-            action_chunk.shape[0], dtype=torch.bool, device=action_chunk.device
-        )
         dense_reward = torch.zeros(action_chunk.shape[0], device=action_chunk.device)
         sparse_reward = torch.zeros(action_chunk.shape[0], device=action_chunk.device)
         for i in range(self.n_action_steps):
@@ -156,10 +153,8 @@ class FurnitureRLSimEnvMultiStepWrapper(gym.Wrapper):
             # assign "permanent" rewards
             dense_reward += self.best_reward
 
-            dones = dones | done.squeeze()
-
         obs = stack_last_n_obs_dict(self.obs, self.n_obs_steps)
-        return obs, sparse_reward, dense_reward, dones, info
+        return obs, sparse_reward, dense_reward, info
 
     def process_obs(self, obs: torch.Tensor) -> np.ndarray:
         # Convert the robot state to have 6D pose

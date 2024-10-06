@@ -15,7 +15,6 @@ env: avoid
 mode: d58_r12 # M3, desired modes 5 and 8, required modes 1 and 2
 obs_dim: 4
 action_dim: 2
-transition_dim: ${action_dim}
 horizon_steps: 4
 cond_steps: 1
 num_modes: 5
@@ -49,7 +48,7 @@ model:
     num_modes: ${num_modes}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   horizon_steps: ${horizon_steps}
   device: ${device}
 
