@@ -1,13 +1,14 @@
 ## Data processing scripts
 
-These are some scripts used for processing the raw datasets from the benchmarks. We already pre-processed them and provide the final datasets. These scripts are for information only.
+These are some scripts used for processing the raw datasets from the benchmarks. We already pre-processed them and provide the final datasets.
 
+Gym and robomimic data
 ```console
 python script/dataset/get_d4rl_dataset.py --env_name=hopper-medium-v2 --save_dir=data/gym/hopper-medium-v2
 python script/dataset/process_robomimic_dataset.py --load_path=../robomimic_raw_data/lift_low_dim_v141.hdf5 --save_dir=data/robomimic/lift --normalize
 ```
 
-Thw raw robomimic data can be downloaded with a clone of the repository and then
+Raw robomimic data can be downloaded with a clone of the repository and then
 ```console
 cd ~/robomimic/robomimic/scripts
 python download_datasets.py --tasks all --dataset_types mh --hdf5_types low_dim # state-only policy

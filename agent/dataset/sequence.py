@@ -5,7 +5,6 @@ No normalization is applied here --- we always normalize the data when pre-proce
 
 """
 
-from itertools import accumulate
 from collections import namedtuple
 import numpy as np
 import torch

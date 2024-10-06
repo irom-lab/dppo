@@ -6,14 +6,14 @@ hydra:
 _target_: agent.finetune.train_ppo_gaussian_agent.TrainPPOGaussianAgent
 
 name: ${env_name}_nopre_ppo_gaussian_mlp_ta${horizon_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 
+seed: 42
 device: cuda:0
 env_name: walker2d-medium-v2
 obs_dim: 17
 action_dim: 6
-transition_dim: ${action_dim}
 cond_steps: 1
 horizon_steps: 1
 act_steps: 1
@@ -79,10 +79,10 @@ model:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [512, 512, 512]
     activation_type: ReLU
-    residual_style: True
+    residual_style: False # with new logvar head
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}

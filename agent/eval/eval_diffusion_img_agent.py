@@ -40,7 +40,7 @@ class EvalImgDiffusionAgent(EvalAgent):
         firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
         prev_obs_venv = self.reset_env_all(options_venv=options_venv)
         firsts_trajs[0] = 1
-        reward_trajs = np.empty((0, self.n_envs))
+        reward_trajs = np.zeros((self.n_steps, self.n_envs))
 
         # Collect a set of trajectories from env
         for step in range(self.n_steps):
@@ -60,9 +60,13 @@ class EvalImgDiffusionAgent(EvalAgent):
             action_venv = output_venv[:, : self.act_steps]
 
             # Apply multi-step action
-            obs_venv, reward_venv, done_venv, info_venv = self.venv.step(action_venv)
-            reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
-            firsts_trajs[step + 1] = done_venv
+            obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv = (
+                self.venv.step(action_venv)
+            )
+            reward_trajs[step] = reward_venv
+            firsts_trajs[step + 1] = terminated_venv | truncated_venv
+    
+            # update for next step
             prev_obs_venv = obs_venv
 
         # Summarize episode reward --- this needs to be handled differently depending on whether the environment is reset after each iteration. Only count episodes that finish within the iteration.

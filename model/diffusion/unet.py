@@ -120,7 +120,7 @@ class Unet1D(nn.Module):
 
     def __init__(
         self,
-        transition_dim,
+        action_dim,
         cond_dim=None,
         diffusion_step_embed_dim=32,
         dim=32,
@@ -134,7 +134,7 @@ class Unet1D(nn.Module):
         groupnorm_eps=1e-5,
     ):
         super().__init__()
-        dims = [transition_dim, *map(lambda m: dim * m, dim_mults)]
+        dims = [action_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
         log.info(f"Channel dimensions: {in_out}")
 
@@ -259,7 +259,7 @@ class Unet1D(nn.Module):
                 activation_type=activation_type,
                 eps=groupnorm_eps,
             ),
-            nn.Conv1d(dim, transition_dim, 1),
+            nn.Conv1d(dim, action_dim, 1),
         )
 
     def forward(

@@ -6,15 +6,15 @@ hydra:
 _target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
 
 name: ${env_name}_rlpd_mlp_ta${horizon_steps}_td${denoising_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
 
+seed: 42
 device: cuda:0
 env_name: walker2d-medium-v2
 obs_dim: 17
 action_dim: 6
-transition_dim: ${action_dim}
 denoising_steps: 20
 cond_steps: 1
 horizon_steps: 1
@@ -81,7 +81,7 @@ model:
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObsAct
     action_dim: ${action_dim}

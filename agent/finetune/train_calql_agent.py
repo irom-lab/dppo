@@ -138,6 +138,7 @@ class TrainCalQLAgent(TrainAgent):
         # Start training loop
         timer = Timer()
         run_results = []
+        cnt_train_step = 0
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
             if self.itr % 1000 == 0:
@@ -167,20 +168,20 @@ class TrainCalQLAgent(TrainAgent):
             self.model.eval() if eval_mode else self.model.train()
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) at the beginning
-            firsts_trajs = np.empty((0, self.n_envs))
+            firsts_trajs = np.zeros((n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or self.itr == 0:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
-                firsts_trajs = np.vstack((firsts_trajs, np.ones((1, self.n_envs))))
+                firsts_trajs[0] = 1
             else:
-                # if done at the end of last iteration, then the envs are just reset
-                firsts_trajs = np.vstack((firsts_trajs, done_venv))
-            reward_trajs = np.empty((0, self.n_envs))
+                # if done at the end of last iteration, the envs are just reset
+                firsts_trajs[0] = done_venv
+            reward_trajs = np.zeros((n_steps, self.n_envs))
 
             # Collect a set of trajectories from env
             cnt_episode = 0
-            for env_step in range(n_steps):
-                if env_step % 100 == 0:
-                    print(f"Completed environment step {env_step}")
+            for step in range(n_steps):
+                if step % 100 == 0:
+                    print(f"Completed environment step {step}")
 
                 # Select action
                 if self.itr < self.n_explore_steps:
@@ -203,26 +204,32 @@ class TrainCalQLAgent(TrainAgent):
                     action_venv = samples[:, : self.act_steps]
 
                 # Apply multi-step action
-                obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
-                    action_venv
+                obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv = (
+                    self.venv.step(action_venv)
                 )
-                reward_trajs = np.vstack((reward_trajs, reward_venv))
-                firsts_trajs = np.vstack((firsts_trajs, done_venv))
-                terminated_venv = done_venv.copy()
+                done_venv = terminated_venv | truncated_venv
+                reward_trajs[step] = reward_venv
+                firsts_trajs[step + 1] = done_venv
 
                 # add to buffer in train mode
                 if not eval_mode:
                     for i in range(self.n_envs):
                         obs_buffer.append(prev_obs_venv["state"][i])
-                        if "final_obs" in info_venv[i]:  # truncated
+                        if truncated_venv[i]:
                             next_obs_buffer.append(info_venv[i]["final_obs"]["state"])
-                            terminated_venv[i] = False
                         else:  # first obs in new episode
                             next_obs_buffer.append(obs_venv["state"][i])
                         action_buffer.append(action_venv[i])
-                        reward_buffer.append(reward_venv[i] * self.scale_reward_factor)
-                        terminated_buffer.append(terminated_venv[i])
+                    reward_buffer.extend(
+                        (reward_venv * self.scale_reward_factor).tolist()
+                    )
+                    terminated_buffer.extend(terminated_venv.tolist())
+
+                # update for next step
                 prev_obs_venv = obs_venv
+
+                # count steps --- not acounting for done within action chunk
+                cnt_train_step += self.n_envs * self.act_steps if not eval_mode else 0
 
                 # check if enough eval episodes are done
                 cnt_episode += np.sum(done_venv)
@@ -444,9 +451,15 @@ class TrainCalQLAgent(TrainAgent):
                 self.save_model()
 
             # Log loss and save metrics
-            run_results.append({"itr": self.itr})
+            run_results.append(
+                {
+                    "itr": self.itr,
+                    "step": cnt_train_step,
+                }
+            )
             if self.itr % self.log_freq == 0 and self.itr >= self.n_explore_steps:
                 time = timer()
+                run_results[-1]["time"] = time
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -467,11 +480,12 @@ class TrainCalQLAgent(TrainAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {alpha:8.4f} | t:{time:8.4f}"
+                        f"{self.itr}: step {cnt_train_step:8d} | loss actor {loss_actor:8.4f} | loss critic {loss_critic:8.4f} | reward {avg_episode_reward:8.4f} | alpha {alpha:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
                             {
+                                "total env step": cnt_train_step,
                                 "loss - actor": loss_actor,
                                 "loss - critic": loss_critic,
                                 "entropy coeff": alpha,
@@ -481,10 +495,7 @@ class TrainCalQLAgent(TrainAgent):
                             step=self.itr,
                             commit=True,
                         )
-                    run_results[-1]["loss_actor"] = loss_actor
-                    run_results[-1]["loss_critic"] = loss_critic
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

@@ -12,7 +12,7 @@ class GMM_MLP(nn.Module):
 
     def __init__(
         self,
-        transition_dim,
+        action_dim,
         horizon_steps,
         cond_dim=None,
         mlp_dims=[256, 256, 256],
@@ -26,10 +26,10 @@ class GMM_MLP(nn.Module):
         std_max=1,
     ):
         super().__init__()
-        self.transition_dim = transition_dim
+        self.action_dim = action_dim
         self.horizon_steps = horizon_steps
         input_dim = cond_dim
-        output_dim = transition_dim * horizon_steps * num_modes
+        output_dim = action_dim * horizon_steps * num_modes
         self.num_modes = num_modes
         if residual_style:
             model = ResidualMLP
@@ -54,7 +54,7 @@ class GMM_MLP(nn.Module):
             self.logvar = torch.nn.Parameter(
                 torch.log(
                     torch.tensor(
-                        [fixed_std**2 for _ in range(transition_dim * num_modes)]
+                        [fixed_std**2 for _ in range(action_dim * num_modes)]
                     )
                 ),
                 requires_grad=True,
@@ -87,19 +87,19 @@ class GMM_MLP(nn.Module):
         # mlp
         out_mean = self.mlp_mean(state)
         out_mean = torch.tanh(out_mean).view(
-            B, self.num_modes, self.horizon_steps * self.transition_dim
+            B, self.num_modes, self.horizon_steps * self.action_dim
         )  # tanh squashing in [-1, 1]
 
         if self.learn_fixed_std:
             out_logvar = torch.clamp(self.logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)
-            out_scale = out_scale.view(1, self.num_modes, self.transition_dim)
+            out_scale = out_scale.view(1, self.num_modes, self.action_dim)
             out_scale = out_scale.repeat(B, 1, self.horizon_steps)
         elif self.use_fixed_std:
             out_scale = torch.ones_like(out_mean).to(device) * self.fixed_std
         else:
             out_logvar = self.mlp_logvar(state).view(
-                B, self.num_modes, self.horizon_steps * self.transition_dim
+                B, self.num_modes, self.horizon_steps * self.action_dim
             )
             out_logvar = torch.clamp(out_logvar, self.logvar_min, self.logvar_max)
             out_scale = torch.exp(0.5 * out_logvar)
