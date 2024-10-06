@@ -346,16 +346,6 @@ class TrainRLPDAgent(TrainAgent):
                 loss_alpha.backward()
                 self.log_alpha_optimizer.step()
 
-                # Update temperature parameter
-                self.log_alpha_optimizer.zero_grad()
-                alpha_loss = self.model.loss_temperature(
-                    {"state": obs_b},
-                    entropy_temperature,
-                    self.target_entropy,
-                )
-                loss_alpha.backward()
-                self.log_alpha_optimizer.step()
-
             # Update lr
             self.actor_lr_scheduler.step()
             self.critic_lr_scheduler.step()
