@@ -5,6 +5,7 @@ Actor and Critic models for model-free online RL with DIffusion POlicy (DIPO).
 
 import torch
 import logging
+import copy
 
 log = logging.getLogger(__name__)
 
@@ -27,44 +28,66 @@ class DIPODiffusion(DiffusionModel):
         assert not self.use_ddim, "DQL does not support DDIM"
         self.critic = critic.to(self.device)
 
+        # target critic
+        self.critic_target = copy.deepcopy(self.critic)
+
         # reassign actor
         self.actor = self.network
+
+        # target actor
+        self.actor_target = copy.deepcopy(self.actor)
 
         # Minimum std used in denoising process when sampling action - helps exploration
         self.min_sampling_denoising_std = min_sampling_denoising_std
 
     # ---------- RL training ----------#
 
-    def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma):
+    def loss_critic(self, obs, next_obs, actions, rewards, terminated, gamma):
 
         # get current Q-function
         current_q1, current_q2 = self.critic(obs, actions)
 
-        # get next Q-function
-        next_actions = self.forward(
-            cond=next_obs,
-            deterministic=False,
-        )  # forward() has no gradient, which is desired here.
-        next_q1, next_q2 = self.critic(next_obs, next_actions)
-        next_q = torch.min(next_q1, next_q2)
+        with torch.no_grad():
+            # get next Q-function
+            next_actions = self.forward(
+                cond=next_obs,
+                deterministic=False,
+            )  # forward() has no gradient, which is desired here.
+            next_q1, next_q2 = self.critic_target(next_obs, next_actions)
+            next_q = torch.min(next_q1, next_q2)
 
-        # terminal state mask
-        mask = 1 - dones
+            # terminal state mask
+            mask = 1 - terminated
 
-        # flatten
-        rewards = rewards.view(-1)
-        next_q = next_q.view(-1)
-        mask = mask.view(-1)
+            # flatten
+            rewards = rewards.view(-1)
+            next_q = next_q.view(-1)
+            mask = mask.view(-1)
 
-        # target value
-        target_q = rewards + gamma * next_q * mask
+            # target value
+            target_q = rewards + gamma * next_q * mask
 
         # Update critic
         loss_critic = torch.mean((current_q1 - target_q) ** 2) + torch.mean(
             (current_q2 - target_q) ** 2
         )
-
         return loss_critic
+
+    def update_target_critic(self, tau):
+        for target_param, source_param in zip(
+            self.critic_target.parameters(), self.critic.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )
+
+    def update_target_actor(self, tau):
+        for target_param, source_param in zip(
+            self.actor_target.parameters(), self.actor.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )
 
     # ---------- Sampling ----------#``
 
@@ -75,6 +98,7 @@ class DIPODiffusion(DiffusionModel):
         cond,
         deterministic=False,
     ):
+        """Use target actor"""
         device = self.betas.device
         B = len(cond["state"])
 
@@ -87,6 +111,7 @@ class DIPODiffusion(DiffusionModel):
                 x=x,
                 t=t_b,
                 cond=cond,
+                network_override=self.actor_target,
             )
             std = torch.exp(0.5 * logvar)
 

@@ -19,13 +19,16 @@ class GaussianModel(torch.nn.Module):
         network_path=None,
         device="cuda:0",
         randn_clip_value=10,
+        tanh_output=False,
     ):
         super().__init__()
         self.device = device
         self.network = network.to(device)
         if network_path is not None:
             checkpoint = torch.load(
-                network_path, map_location=self.device, weights_only=True
+                network_path,
+                map_location=self.device,
+                weights_only=True,
             )
             self.load_state_dict(
                 checkpoint["model"],
@@ -40,12 +43,16 @@ class GaussianModel(torch.nn.Module):
         # Clip sampled randn (from standard deviation) such that the sampled action is not too far away from mean
         self.randn_clip_value = randn_clip_value
 
+        # Whether to apply tanh to the **sampled** action --- used in SAC
+        self.tanh_output = tanh_output
+
     def loss(
         self,
         true_action,
         cond,
         ent_coef,
     ):
+        """no squashing"""
         B = len(true_action)
         dist = self.forward_train(
             cond,
@@ -80,6 +87,8 @@ class GaussianModel(torch.nn.Module):
         cond,
         deterministic=False,
         network_override=None,
+        reparameterize=False,
+        get_logprob=False,
     ):
         B = len(cond["state"]) if "state" in cond else len(cond["rgb"])
         T = self.horizon_steps
@@ -88,9 +97,24 @@ class GaussianModel(torch.nn.Module):
             deterministic=deterministic,
             network_override=network_override,
         )
-        sampled_action = dist.sample()
+        if reparameterize:
+            sampled_action = dist.rsample()
+        else:
+            sampled_action = dist.sample()
         sampled_action.clamp_(
             dist.loc - self.randn_clip_value * dist.scale,
             dist.loc + self.randn_clip_value * dist.scale,
         )
-        return sampled_action.view(B, T, -1)
+
+        if get_logprob:
+            log_prob = dist.log_prob(sampled_action)
+
+            # For SAC/RLPD, squash mean after sampling here instead of right after model output as in PPO
+            if self.tanh_output:
+                sampled_action = torch.tanh(sampled_action)
+                log_prob -= torch.log(1 - sampled_action.pow(2) + 1e-6)
+            return sampled_action.view(B, T, -1), log_prob.sum(1, keepdim=False)
+        else:
+            if self.tanh_output:
+                sampled_action = torch.tanh(sampled_action)
+            return sampled_action.view(B, T, -1)

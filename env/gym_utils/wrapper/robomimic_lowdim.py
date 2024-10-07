@@ -1,6 +1,8 @@
 """
 Environment wrapper for Robomimic environments with state observations.
 
+Also return done=False since we do not terminate episode early.
+
 Modified from https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/env/robomimic/robomimic_lowdim_wrapper.py
 
 For consistency, we will use Dict{} for the observation space, with the key "state" for the state observation.
@@ -65,7 +67,7 @@ class RobomimicLowdimWrapper(gym.Env):
             low=low,
             high=high,
             shape=low.shape,
-            dtype=low.dtype,
+            dtype=np.float32,
         )
 
     def normalize_obs(self, obs):
@@ -129,7 +131,7 @@ class RobomimicLowdimWrapper(gym.Env):
             video_img = self.render(mode="rgb_array")
             self.video_writer.append_data(video_img)
 
-        return obs, reward, done, info
+        return obs, reward, False, info
 
     def render(self, mode="rgb_array"):
         h, w = self.render_hw

@@ -1,0 +1,113 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.finetune.train_calql_agent.TrainCalQLAgent
+
+name: ${env_name}_calql_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
+
+seed: 42
+device: cuda:0
+env_name: hopper-medium-v2
+obs_dim: 11
+action_dim: 3
+cond_steps: 1
+horizon_steps: 1
+act_steps: 1
+
+env:
+  n_envs: 1
+  name: ${env_name}
+  max_episode_steps: 1000
+  reset_at_iteration: False
+  save_video: False
+  best_reward_threshold_for_success: 3
+  wrappers:
+    mujoco_locomotion_lowdim:
+      normalization_path: ${normalization_path}
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: calql-${env_name}
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_train_itr: 100
+  n_steps: 1  # not used
+  gamma: 0.99
+  actor_lr: 1e-4
+  actor_weight_decay: 0
+  actor_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-4
+  critic_lr: 3e-4
+  critic_weight_decay: 0
+  critic_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 3e-4
+  save_model_freq: 10
+  val_freq: 10
+  render:
+    freq: 1
+    num: 0
+  log_freq: 1
+  # CalQL specific
+  train_online: False
+  batch_size: 256
+  n_random_actions: 4
+  target_ema_rate: 0.005
+  scale_reward_factor: 1.0
+  num_update: 1000
+  buffer_size: 1000000
+  n_eval_episode: 10
+  n_explore_steps: 0
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps}'}
+  init_temperature: 1
+  automatic_entropy_tuning: True
+
+model:
+  _target_: model.rl.gaussian_calql.CalQL_Gaussian
+  randn_clip_value: 3
+  cql_min_q_weight: 5.0
+  tanh_output: True
+  actor:
+    _target_: model.common.mlp_gaussian.Gaussian_MLP
+    mlp_dims: [256, 256]
+    activation_type: ReLU
+    tanh_output: False  # squash after sampling instead
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    
+    std_max: 7.3891
+    std_min: 0.0067
+  critic:
+    _target_: model.common.critic.CriticObsAct
+    mlp_dims: [256, 256]
+    activation_type: ReLU
+    use_layernorm: True
+    double_q: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    action_dim: ${action_dim}
+    action_steps: ${act_steps}
+  horizon_steps: ${horizon_steps}
+  device: ${device}
+
+offline_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceQLearningDataset
+  dataset_path: ${offline_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}
+  discount_factor: ${train.gamma}
+  get_mc_return: True

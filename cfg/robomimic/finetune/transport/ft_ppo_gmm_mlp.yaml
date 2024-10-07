@@ -16,7 +16,6 @@ device: cuda:0
 env_name: transport
 obs_dim: 59
 action_dim: 14
-transition_dim: ${action_dim}
 cond_steps: 1
 horizon_steps: 8
 act_steps: 8
@@ -95,7 +94,7 @@ model:
     num_modes: ${num_modes}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}

@@ -22,7 +22,7 @@ class VisionDiffusionMLP(nn.Module):
     def __init__(
         self,
         backbone,
-        transition_dim,
+        action_dim,
         horizon_steps,
         cond_dim,
         img_cond_steps=1,
@@ -77,9 +77,9 @@ class VisionDiffusionMLP(nn.Module):
 
         # diffusion
         input_dim = (
-            time_dim + transition_dim * horizon_steps + visual_feature_dim + cond_dim
+            time_dim + action_dim * horizon_steps + visual_feature_dim + cond_dim
         )
-        output_dim = transition_dim * horizon_steps
+        output_dim = action_dim * horizon_steps
         self.time_embedding = nn.Sequential(
             SinusoidalPosEmb(time_dim),
             nn.Linear(time_dim, time_dim * 2),
@@ -175,7 +175,7 @@ class DiffusionMLP(nn.Module):
 
     def __init__(
         self,
-        transition_dim,
+        action_dim,
         horizon_steps,
         cond_dim,
         time_dim=16,
@@ -187,7 +187,7 @@ class DiffusionMLP(nn.Module):
         residual_style=False,
     ):
         super().__init__()
-        output_dim = transition_dim * horizon_steps
+        output_dim = action_dim * horizon_steps
         self.time_embedding = nn.Sequential(
             SinusoidalPosEmb(time_dim),
             nn.Linear(time_dim, time_dim * 2),
@@ -204,9 +204,9 @@ class DiffusionMLP(nn.Module):
                 activation_type=activation_type,
                 out_activation_type="Identity",
             )
-            input_dim = time_dim + transition_dim * horizon_steps + cond_mlp_dims[-1]
+            input_dim = time_dim + action_dim * horizon_steps + cond_mlp_dims[-1]
         else:
-            input_dim = time_dim + transition_dim * horizon_steps + cond_dim
+            input_dim = time_dim + action_dim * horizon_steps + cond_dim
         self.mlp_mean = model(
             [input_dim] + mlp_dims + [output_dim],
             activation_type=activation_type,

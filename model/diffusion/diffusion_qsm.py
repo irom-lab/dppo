@@ -14,16 +14,6 @@ log = logging.getLogger(__name__)
 from model.diffusion.diffusion_rwr import RWRDiffusion
 
 
-def expectile_loss(diff, expectile=0.8):
-    weight = torch.where(diff > 0, expectile, (1 - expectile))
-    return weight * (diff**2)
-
-
-def soft_update(target, source, tau):
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
-
 class QSMDiffusion(RWRDiffusion):
 
     def __init__(
@@ -34,6 +24,8 @@ class QSMDiffusion(RWRDiffusion):
     ):
         super().__init__(network=actor, **kwargs)
         self.critic_q = critic.to(self.device)
+
+        # target critic
         self.target_q = copy.deepcopy(critic)
 
         # assign actor
@@ -54,7 +46,6 @@ class QSMDiffusion(RWRDiffusion):
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
 
         # get current value for noisy actions as the code does --- the algorthm block in the paper is wrong, it says using a_t, the final denoised action
-        # x_noisy_flat = torch.flatten(x_noisy, start_dim=-2)
         x_noisy.requires_grad_(True)
         current_q1, current_q2 = self.critic_q(obs, x_noisy)
 
@@ -68,10 +59,10 @@ class QSMDiffusion(RWRDiffusion):
 
         # Loss with mask - align predicted noise with critic gradient of noisy actions
         # Note: the gradient of mu wrt. epsilon has a negative sign
-        loss = F.mse_loss(-x_recon, q_grad_coeff * gradient_q, reduction="none").mean()
+        loss = F.mse_loss(-x_recon, q_grad_coeff * gradient_q)
         return loss
 
-    def loss_critic(self, obs, next_obs, actions, rewards, dones, gamma):
+    def loss_critic(self, obs, next_obs, actions, rewards, terminated, gamma):
 
         # get current Q-function
         current_q1, current_q2 = self.critic_q(obs, actions)
@@ -86,7 +77,7 @@ class QSMDiffusion(RWRDiffusion):
         next_q = torch.min(next_q1, next_q2)
 
         # terminal state mask
-        mask = 1 - dones
+        mask = 1 - terminated
 
         # flatten
         rewards = rewards.view(-1)
@@ -104,4 +95,9 @@ class QSMDiffusion(RWRDiffusion):
         return loss_critic
 
     def update_target_critic(self, tau):
-        soft_update(self.target_q, self.critic_q, tau)
+        for target_param, source_param in zip(
+            self.target_q.parameters(), self.critic_q.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )

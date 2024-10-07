@@ -5,7 +5,6 @@ Critic networks.
 
 from typing import Union
 import torch
-import copy
 import einops
 from copy import deepcopy
 
@@ -28,20 +27,15 @@ class CriticObs(torch.nn.Module):
         super().__init__()
         mlp_dims = [cond_dim] + mlp_dims + [1]
         if residual_style:
-            self.Q1 = ResidualMLP(
-                mlp_dims,
-                activation_type=activation_type,
-                out_activation_type="Identity",
-                use_layernorm=use_layernorm,
-            )
+            model = ResidualMLP
         else:
-            self.Q1 = MLP(
-                mlp_dims,
-                activation_type=activation_type,
-                out_activation_type="Identity",
-                use_layernorm=use_layernorm,
-                verbose=False,
-            )
+            model = MLP
+        self.Q1 = model(
+            mlp_dims,
+            activation_type=activation_type,
+            out_activation_type="Identity",
+            use_layernorm=use_layernorm,
+        )
 
     def forward(self, cond: Union[dict, torch.Tensor]):
         """
@@ -72,26 +66,28 @@ class CriticObsAct(torch.nn.Module):
         activation_type="Mish",
         use_layernorm=False,
         residual_tyle=False,
+        double_q=True,
         **kwargs,
     ):
         super().__init__()
         mlp_dims = [cond_dim + action_dim * action_steps] + mlp_dims + [1]
         if residual_tyle:
-            self.Q1 = ResidualMLP(
-                mlp_dims,
-                activation_type=activation_type,
-                out_activation_type="Identity",
-                use_layernorm=use_layernorm,
-            )
+            model = ResidualMLP
         else:
-            self.Q1 = MLP(
+            model = MLP
+        self.Q1 = model(
+            mlp_dims,
+            activation_type=activation_type,
+            out_activation_type="Identity",
+            use_layernorm=use_layernorm,
+        )
+        if double_q:
+            self.Q2 = model(
                 mlp_dims,
                 activation_type=activation_type,
                 out_activation_type="Identity",
                 use_layernorm=use_layernorm,
-                verbose=False,
             )
-        self.Q2 = copy.deepcopy(self.Q1)
 
     def forward(self, cond: dict, action):
         """
@@ -108,9 +104,13 @@ class CriticObsAct(torch.nn.Module):
         action = action.view(B, -1)
 
         x = torch.cat((state, action), dim=-1)
-        q1 = self.Q1(x)
-        q2 = self.Q2(x)
-        return q1.squeeze(1), q2.squeeze(1)
+        if hasattr(self, "Q2"):
+            q1 = self.Q1(x)
+            q2 = self.Q2(x)
+            return q1.squeeze(1), q2.squeeze(1)
+        else:
+            q1 = self.Q1(x)
+            return q1.squeeze(1)
 
 
 class ViTCritic(CriticObs):

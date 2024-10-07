@@ -16,7 +16,6 @@ device: cuda:0
 env_name: lift
 obs_dim: 19
 action_dim: 7
-transition_dim: ${action_dim}
 cond_steps: 1
 horizon_steps: 4
 act_steps: 4
@@ -92,7 +91,7 @@ model:
     std_max: 0.2
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}

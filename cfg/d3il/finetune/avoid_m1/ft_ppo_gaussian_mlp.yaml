@@ -16,7 +16,6 @@ env_name: avoiding-m5
 mode: d56_r12 # M1, desired modes 5 and 6, required modes 1 and 2
 obs_dim: 4
 action_dim: 2
-transition_dim: ${action_dim}
 cond_steps: 1
 horizon_steps: 4
 act_steps: 4
@@ -94,7 +93,7 @@ model:
     learn_fixed_std: False
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
     mlp_dims: [256, 256, 256]

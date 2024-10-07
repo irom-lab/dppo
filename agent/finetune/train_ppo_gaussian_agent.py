@@ -27,6 +27,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
         # Start training loop
         timer = Timer()
         run_results = []
+        cnt_train_step = 0
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
@@ -45,33 +46,35 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
             last_itr_eval = eval_mode
 
             # Reset env before iteration starts (1) if specified, (2) at eval mode, or (3) right after eval mode
-            dones_trajs = np.zeros((self.n_steps, self.n_envs))
             firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
             if self.reset_at_iteration or eval_mode or last_itr_eval:
                 prev_obs_venv = self.reset_env_all(options_venv=options_venv)
                 firsts_trajs[0] = 1
             else:
-                firsts_trajs[0] = (
-                    done_venv  # if done at the end of last iteration, then the envs are just reset
-                )
+                # if done at the end of last iteration, the envs are just reset
+                firsts_trajs[0] = done_venv
 
             # Holder
             obs_trajs = {
-                "state": np.empty((0, self.n_envs, self.n_cond_step, self.obs_dim))
+                "state": np.zeros(
+                    (self.n_steps, self.n_envs, self.n_cond_step, self.obs_dim)
+                )
             }
-            samples_trajs = np.empty(
+            samples_trajs = np.zeros(
                 (
-                    0,
+                    self.n_steps,
                     self.n_envs,
                     self.horizon_steps,
                     self.action_dim,
                 )
             )
-            reward_trajs = np.empty((0, self.n_envs))
-            obs_full_trajs = np.empty((0, self.n_envs, self.obs_dim))
-            obs_full_trajs = np.vstack(
-                (obs_full_trajs, prev_obs_venv["state"][:, -1][None])
-            )  # save current obs
+            reward_trajs = np.zeros((self.n_steps, self.n_envs))
+            terminated_trajs = np.zeros((self.n_steps, self.n_envs))
+            if self.save_full_observations:
+                obs_full_trajs = np.empty((0, self.n_envs, self.obs_dim))
+                obs_full_trajs = np.vstack(
+                    (obs_full_trajs, prev_obs_venv["state"][:, -1][None])
+                )
 
             # Collect a set of trajectories from env
             for step in range(self.n_steps):
@@ -93,9 +96,10 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                 action_venv = output_venv[:, : self.act_steps]
 
                 # Apply multi-step action
-                obs_venv, reward_venv, done_venv, info_venv = self.venv.step(
-                    action_venv
+                obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv = (
+                    self.venv.step(action_venv)
                 )
+                done_venv = terminated_venv | truncated_venv
                 if self.save_full_observations:  # state-only
                     obs_full_venv = np.array(
                         [info["full_obs"]["state"] for info in info_venv]
@@ -103,14 +107,17 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                     obs_full_trajs = np.vstack(
                         (obs_full_trajs, obs_full_venv.transpose(1, 0, 2))
                     )
-                obs_trajs["state"] = np.vstack(
-                    (obs_trajs["state"], prev_obs_venv["state"][None])
-                )
-                samples_trajs = np.vstack((samples_trajs, output_venv[None]))
-                reward_trajs = np.vstack((reward_trajs, reward_venv[None]))
-                dones_trajs[step] = done_venv
+                obs_trajs["state"][step] = prev_obs_venv["state"]
+                samples_trajs[step] = output_venv
+                reward_trajs[step] = reward_venv
+                terminated_trajs[step] = terminated_venv
                 firsts_trajs[step + 1] = done_venv
+
+                # update for next step
                 prev_obs_venv = obs_venv
+
+                # count steps --- not acounting for done within action chunk
+                cnt_train_step += self.n_envs * self.act_steps if not eval_mode else 0
 
             # Summarize episode reward --- this needs to be handled differently depending on whether the environment is reset after each iteration. Only count episodes that finish within the iteration.
             episodes_start_end = []
@@ -221,7 +228,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                             )
                         else:
                             nextvalues = values_trajs[t + 1]
-                        nonterminal = 1.0 - dones_trajs[t]
+                        nonterminal = 1.0 - terminated_trajs[t]
                         # delta = r + gamma*V(st+1) - V(st)
                         delta = (
                             reward_trajs[t] * self.reward_scale_const
@@ -363,6 +370,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
             run_results.append(
                 {
                     "itr": self.itr,
+                    "step": cnt_train_step,
                 }
             )
             if self.save_trajs:
@@ -372,6 +380,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                 run_results[-1]["reward_trajs"] = reward_trajs
             if self.itr % self.log_freq == 0:
                 time = timer()
+                run_results[-1]["time"] = time
                 if eval_mode:
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
@@ -392,11 +401,12 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                     run_results[-1]["eval_best_reward"] = avg_best_reward
                 else:
                     log.info(
-                        f"{self.itr}: loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | ent {-entropy_loss:8.4f} | reward {avg_episode_reward:8.4f} | t:{time:8.4f}"
+                        f"{self.itr}: step {cnt_train_step:8d} | loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | ent {-entropy_loss:8.4f} | reward {avg_episode_reward:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
                             {
+                                "total env step": cnt_train_step,
                                 "loss": loss,
                                 "pg loss": pg_loss,
                                 "value loss": v_loss,
@@ -412,16 +422,7 @@ class TrainPPOGaussianAgent(TrainPPOAgent):
                             step=self.itr,
                             commit=True,
                         )
-                    run_results[-1]["loss"] = loss
-                    run_results[-1]["pg_loss"] = pg_loss
-                    run_results[-1]["value_loss"] = v_loss
-                    run_results[-1]["entropy_loss"] = entropy_loss
-                    run_results[-1]["approx_kl"] = approx_kl
-                    run_results[-1]["ratio"] = ratio
-                    run_results[-1]["clip_frac"] = np.mean(clipfracs)
-                    run_results[-1]["explained_variance"] = explained_var
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
-                run_results[-1]["time"] = time
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

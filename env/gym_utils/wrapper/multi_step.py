@@ -138,22 +138,32 @@ class MultiStep(gym.Wrapper):
         """
         if action.ndim == 1:  # in case action_steps = 1
             action = action[None]
+        truncated = False
+        terminated = False
         for act_step, act in enumerate(action):
             self.cnt += 1
-
-            if len(self.done) > 0 and self.done[-1]:
-                # termination
+            if terminated or truncated:
                 break
+
+            # done does not differentiate terminal and truncation
             observation, reward, done, info = self.env.step(act)
 
             self.obs.append(observation)
             self.action.append(act)
             self.reward.append(reward)
-            if (
-                self.max_episode_steps is not None
-            ) and self.cnt >= self.max_episode_steps:
-                # truncation
-                done = True
+            
+            # in gym, timelimit wrapper is automatically used given env._spec.max_episode_steps
+            if "TimeLimit.truncated" not in info:
+                if done:
+                    terminated = True
+                elif (
+                    self.max_episode_steps is not None
+                ) and self.cnt >= self.max_episode_steps:
+                    truncated = True
+            else:
+                truncated = info["TimeLimit.truncated"]
+                terminated = done
+            done = truncated or terminated
             self.done.append(done)
             self._add_info(info)
         observation = self._get_obs(self.n_obs_steps)
@@ -165,6 +175,12 @@ class MultiStep(gym.Wrapper):
 
         # In mujoco case, done can happen within the loop above
         if self.reset_within_step and self.done[-1]:
+
+            # need to save old observation in the case of truncation only, for bootstrapping
+            if truncated:
+                info["final_obs"] = observation
+
+            # reset
             observation = (
                 self.reset()
             )  # TODO: arguments? this cannot handle video recording right now since needs to pass in options
@@ -173,7 +189,7 @@ class MultiStep(gym.Wrapper):
         # reset reward and done for next step
         self.reward = list()
         self.done = list()
-        return observation, reward, done, info
+        return observation, reward, terminated, truncated, info
 
     def _get_obs(self, n_steps=1):
         """

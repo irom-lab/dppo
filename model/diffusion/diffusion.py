@@ -169,8 +169,11 @@ class DiffusionModel(nn.Module):
 
     # ---------- Sampling ----------#
 
-    def p_mean_var(self, x, t, cond, index=None):
-        noise = self.network(x, t, cond=cond)
+    def p_mean_var(self, x, t, cond, index=None, network_override=None):
+        if network_override is not None:
+            noise = network_override(x, t, cond=cond)
+        else:
+            noise = self.network(x, t, cond=cond)
 
         # Predict x_0
         if self.predict_epsilon:
@@ -228,7 +231,7 @@ class DiffusionModel(nn.Module):
         return mu, logvar
 
     @torch.no_grad()
-    def forward(self, cond):
+    def forward(self, cond, deterministic=True):
         """
         Forward pass for sampling actions. Used in evaluating pre-trained/fine-tuned policy. Not modifying diffusion clipping
 

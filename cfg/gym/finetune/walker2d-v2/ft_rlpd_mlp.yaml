@@ -1,0 +1,103 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
+
+name: ${env_name}_rlpd_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/train.npz
+
+seed: 42
+device: cuda:0
+env_name: walker2d-medium-v2
+obs_dim: 17
+action_dim: 6
+denoising_steps: 20
+cond_steps: 1
+horizon_steps: 1
+act_steps: 1
+
+env:
+  n_envs: 40
+  name: ${env_name}
+  max_episode_steps: 1000
+  reset_at_iteration: False
+  save_video: False
+  best_reward_threshold_for_success: 3
+  wrappers:
+    mujoco_locomotion_lowdim:
+      normalization_path: ${normalization_path}
+    multi_step: 
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: rlpd-gym-${env_name}-finetune
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_train_itr: 1000
+  n_critic_warmup_itr: 5
+  n_steps: 2000
+  gamma: 0.99
+  actor_lr: 1e-4
+  actor_weight_decay: 0
+  actor_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-4
+  critic_lr: 1e-3
+  critic_weight_decay: 0
+  critic_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-3
+  save_model_freq: 100
+  val_freq: 10
+  render:
+    freq: 1
+    num: 0
+  # RLPD specific
+  batch_size: 512
+  entropy_temperature: 1.0    # alpha in RLPD paper
+  target_ema_rate: 0.005         # rho in RLPD paper
+  scale_reward_factor: 1.0    # multiply reward by this amount for more stable value estimation
+  replay_ratio: 64          # number of batches to sample for each learning update
+  buffer_size: 1000000
+
+model:
+  _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
+  randn_clip_value: 3
+  actor:
+    _target_: model.common.mlp_gaussian.Gaussian_MLP
+    mlp_dims: [512, 512, 512]
+    activation_type: ReLU
+    residual_style: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    action_dim: ${action_dim}
+  critic:
+    _target_: model.common.critic.CriticObsAct
+    action_dim: ${action_dim}
+    action_steps: ${act_steps}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    mlp_dims: [256, 256, 256]
+    activation_type: Mish
+    residual_style: True
+    use_layernorm: True
+  horizon_steps: ${horizon_steps}
+  device: ${device}
+  n_critics: 2            # Ensemble size for critic models
+
+offline_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceQLearningDataset
+  dataset_path: ${offline_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}

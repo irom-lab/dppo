@@ -1,0 +1,59 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.pretrain.train_gaussian_agent.TrainGaussianAgent
+
+name: ${env}_pre_gaussian_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+train_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env}/train.npz
+
+seed: 42
+device: cuda:0
+env: lift
+obs_dim: 19
+action_dim: 7
+horizon_steps: 1
+cond_steps: 1
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: robomimic-${env}-pretrain
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_epochs: 5000
+  batch_size: 256
+  learning_rate: 1e-4
+  weight_decay: 1e-6
+  lr_scheduler:
+    first_cycle_steps: 5000
+    warmup_steps: 100
+    min_lr: 1e-5
+  epoch_start_ema: 20
+  update_ema_freq: 10
+  save_model_freq: 1000
+
+model:
+  _target_: model.common.gaussian.GaussianModel
+  network:
+    _target_: model.common.mlp_gaussian.Gaussian_MLP
+    mlp_dims: [1024, 1024, 1024]
+    residual_style: False
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    action_dim: ${action_dim}
+  horizon_steps: ${horizon_steps}
+  device: ${device}
+
+
+ema:
+  decay: 0.995
+
+train_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceDataset
+  dataset_path: ${train_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}
