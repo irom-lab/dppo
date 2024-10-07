@@ -65,11 +65,11 @@ train:
     num: 0
   # QSM specific
   scale_reward_factor: 0.01
-  q_grad_coeff: 50
-  critic_tau: 0.005  # rate of target q network update
-  buffer_size: 5000
-  batch_size: 256
-  replay_ratio: 32
+  q_grad_coeff: 10
+  critic_tau: 0.005
+  buffer_size: 25000
+  replay_ratio: 16
+  batch_size: 1000
 
 model:
   _target_: model.diffusion.diffusion_qsm.QSMDiffusion
