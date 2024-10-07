@@ -298,7 +298,9 @@ class VPGDiffusion(DiffusionModel):
 
             # clamp action at final step
             if self.final_action_clip_value is not None and i == len(t_all) - 1:
-                x = torch.clamp(x, -self.final_action_clip_value, self.final_action_clip_value)
+                x = torch.clamp(
+                    x, -self.final_action_clip_value, self.final_action_clip_value
+                )
 
             if return_chain:
                 if not self.use_ddim and t <= self.ft_denoising_steps:

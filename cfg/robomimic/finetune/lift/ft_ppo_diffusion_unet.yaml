@@ -16,7 +16,6 @@ device: cuda:0
 env_name: lift
 obs_dim: 19
 action_dim: 7
-transition_dim: ${action_dim}
 denoising_steps: 20
 ft_denoising_steps: 10
 cond_steps: 1
@@ -100,7 +99,7 @@ model:
     smaller_encoder: False
     cond_predict_scale: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}

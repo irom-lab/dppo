@@ -6,15 +6,15 @@ hydra:
 _target_: agent.finetune.train_rwr_diffusion_agent.TrainRWRDiffusionAgent
 
 name: ${env_name}_rwr_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 base_policy_path: ${oc.env:DPPO_LOG_DIR}/gym-pretrain/hopper-medium-v2_pre_diffusion_mlp_ta4_td20/2024-06-12_23-10-05/checkpoint/state_3000.pt
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 
+seed: 42
 device: cuda:0
 env_name: hopper-medium-v2
 obs_dim: 11
 action_dim: 3
-transition_dim: ${action_dim}
 denoising_steps: 20
 cond_steps: 1
 horizon_steps: 4
@@ -73,7 +73,7 @@ model:
   network:
     _target_: model.diffusion.mlp_diffusion.DiffusionMLP
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     time_dim: 16
     mlp_dims: [512, 512, 512]

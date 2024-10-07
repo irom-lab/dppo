@@ -1,6 +1,8 @@
 """
 Environment wrapper for Robomimic environments with image observations.
 
+Also return done=False since we do not terminate episode early.
+
 Modified from https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/env/robomimic/robomimic_image_wrapper.py
 
 """
@@ -158,7 +160,7 @@ class RobomimicImageWrapper(gym.Env):
             video_img = self.render(mode="rgb_array")
             self.video_writer.append_data(video_img)
 
-        return obs, reward, done, info
+        return obs, reward, False, info
 
     def render(self, mode="rgb_array"):
         h, w = self.render_hw

@@ -1,0 +1,114 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
+
+name: ${env_name}_rlpd_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
+
+seed: 42
+device: cuda:0
+env_name: can
+obs_dim: 23
+action_dim: 7
+cond_steps: 1
+horizon_steps: 1
+act_steps: 1
+
+env:
+  n_envs: 1
+  name: ${env_name}
+  max_episode_steps: 300
+  reset_at_iteration: False
+  save_video: False
+  best_reward_threshold_for_success: 1
+  wrappers:
+    robomimic_lowdim:
+      normalization_path: ${normalization_path}
+      low_dim_keys: ['robot0_eef_pos',
+                    'robot0_eef_quat',
+                    'robot0_gripper_qpos',
+                    'object'] # same order of preprocessed observations
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+wandb:
+  entity: ${oc.env:DPPO_WANDB_ENTITY}
+  project: rlpd-${env_name}
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_train_itr: 1000000
+  n_steps: 1
+  gamma: 0.99
+  actor_lr: 1e-4
+  actor_weight_decay: 0
+  actor_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-4
+  critic_lr: 1e-4
+  critic_weight_decay: 0
+  critic_lr_scheduler:
+    first_cycle_steps: 1000
+    warmup_steps: 10
+    min_lr: 1e-4
+  save_model_freq: 100000
+  val_freq: 10000
+  render:
+    freq: 10000
+    num: 0
+  log_freq: 200
+  # RLPD specific
+  batch_size: 256
+  target_ema_rate: 0.01
+  scale_reward_factor: 1
+  critic_num_update: 3
+  buffer_size: 400000
+  n_eval_episode: 40
+  n_explore_steps: 0
+  target_entropy: ${eval:'- ${action_dim} * ${act_steps}'}
+  init_temperature: 1
+
+model:
+  _target_: model.rl.gaussian_rlpd.RLPD_Gaussian
+  randn_clip_value: 10
+  backup_entropy: True
+  n_critics: 5
+  tanh_output: True
+  actor:
+    _target_: model.common.mlp_gaussian.Gaussian_MLP
+    mlp_dims: [512, 512, 512]
+    activation_type: ReLU
+    tanh_output: False  # squash after sampling instead
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    
+    std_max: 7.3891
+    std_min: 0.0067
+  critic:
+    _target_: model.common.critic.CriticObsAct
+    mlp_dims: [256, 256, 256]
+    activation_type: ReLU
+    use_layernorm: True
+    double_q: False # use ensemble
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    action_dim: ${action_dim}
+    action_steps: ${act_steps}
+  horizon_steps: ${horizon_steps}
+  device: ${device}
+
+offline_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceQLearningDataset
+  dataset_path: ${offline_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  device: ${device}

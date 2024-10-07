@@ -16,7 +16,6 @@ device: cuda:0
 env_name: transport
 obs_dim: 59
 action_dim: 14
-transition_dim: ${action_dim}
 denoising_steps: 20
 cond_steps: 1
 horizon_steps: 8
@@ -73,10 +72,11 @@ train:
     num: 0
   # DQL specific
   scale_reward_factor: 1
+  target_ema_rate: 0.005
+  buffer_size: 1000000
   eta: 1.0
-  buffer_size: 400000
-  batch_size: 5000
-  replay_ratio: 64
+  replay_ratio: 16
+  batch_size: 1000
 
 model:
   _target_: model.diffusion.diffusion_dql.DQLDiffusion
@@ -92,7 +92,7 @@ model:
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObsAct
     action_dim: ${action_dim}

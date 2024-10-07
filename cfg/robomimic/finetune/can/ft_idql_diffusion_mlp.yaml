@@ -16,7 +16,6 @@ device: cuda:0
 env_name: can
 obs_dim: 23
 action_dim: 7
-transition_dim: ${action_dim}
 denoising_steps: 20
 cond_steps: 1
 horizon_steps: 4
@@ -74,9 +73,9 @@ train:
   eval_sample_num: 10 # how many samples to score during eval
   critic_tau: 0.001  # rate of target q network update
   use_expectile_exploration: True
-  buffer_size: 3000
-  batch_size: 512
-  replay_ratio: 16
+  buffer_size: 5000 # * n_envs
+  replay_ratio: 128
+  batch_size: 1000
 
 model:
   _target_: model.diffusion.diffusion_idql.IDQLDiffusion
@@ -92,7 +91,7 @@ model:
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic_q:
     _target_: model.common.critic.CriticObsAct
     action_dim: ${action_dim}

@@ -7,7 +7,6 @@ Residual model is taken from https://github.com/ALRhub/d3il/blob/main/agents/mod
 
 import torch
 from torch import nn
-from torch.nn.utils import spectral_norm
 from collections import OrderedDict
 import logging
 
@@ -26,7 +25,6 @@ activation_dict = nn.ModuleDict(
 
 
 class MLP(nn.Module):
-
     def __init__(
         self,
         dim_list,
@@ -35,7 +33,9 @@ class MLP(nn.Module):
         activation_type="Tanh",
         out_activation_type="Identity",
         use_layernorm=False,
-        use_spectralnorm=False,
+        use_layernorm_final=False,
+        dropout=0,
+        use_drop_final=False,
         verbose=False,
     ):
         super(MLP, self).__init__()
@@ -50,39 +50,25 @@ class MLP(nn.Module):
             o_dim = dim_list[idx + 1]
             if append_dim > 0 and idx in append_layers:
                 i_dim += append_dim
-
             linear_layer = nn.Linear(i_dim, o_dim)
-            if use_spectralnorm:
-                linear_layer = spectral_norm(linear_layer)
-            if idx == num_layer - 1:
-                module = nn.Sequential(
-                    OrderedDict(
-                        [
-                            ("linear_1", linear_layer),
-                            ("act_1", activation_dict[out_activation_type]),
-                        ]
-                    )
-                )
-            else:
-                if use_layernorm:
-                    module = nn.Sequential(
-                        OrderedDict(
-                            [
-                                ("linear_1", linear_layer),
-                                ("norm_1", nn.LayerNorm(o_dim)),
-                                ("act_1", activation_dict[activation_type]),
-                            ]
-                        )
-                    )
-                else:
-                    module = nn.Sequential(
-                        OrderedDict(
-                            [
-                                ("linear_1", linear_layer),
-                                ("act_1", activation_dict[activation_type]),
-                            ]
-                        )
-                    )
+
+            # Add module components
+            layers = [("linear_1", linear_layer)]
+            if use_layernorm and (idx < num_layer - 1 or use_layernorm_final):
+                layers.append(("norm_1", nn.LayerNorm(o_dim)))
+            if dropout > 0 and (idx < num_layer - 1 or use_drop_final):
+                layers.append(("dropout_1", nn.Dropout(dropout)))
+
+            # add activation function
+            act = (
+                activation_dict[activation_type]
+                if idx != num_layer - 1
+                else activation_dict[out_activation_type]
+            )
+            layers.append(("act_1", act))
+
+            # re-construct module
+            module = nn.Sequential(OrderedDict(layers))
             self.moduleList.append(module)
         if verbose:
             logging.info(self.moduleList)
@@ -109,6 +95,7 @@ class ResidualMLP(nn.Module):
         activation_type="Mish",
         out_activation_type="Identity",
         use_layernorm=False,
+        use_layernorm_final=False,
     ):
         super(ResidualMLP, self).__init__()
         hidden_dim = dim_list[1]
@@ -126,6 +113,8 @@ class ResidualMLP(nn.Module):
             ]
         )
         self.layers.append(nn.Linear(hidden_dim, dim_list[-1]))
+        if use_layernorm_final:
+            self.layers.append(nn.LayerNorm(dim_list[-1]))
         self.layers.append(activation_dict[out_activation_type])
 
     def forward(self, x):

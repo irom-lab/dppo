@@ -16,7 +16,6 @@ device: cuda:0
 env_name: can
 obs_dim: 23
 action_dim: 7
-transition_dim: ${action_dim}
 cond_steps: 1
 horizon_steps: 4
 act_steps: 4
@@ -55,6 +54,6 @@ model:
     fixed_std: 0.1
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   horizon_steps: ${horizon_steps}
   device: ${device}

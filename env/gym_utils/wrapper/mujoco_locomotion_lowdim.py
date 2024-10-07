@@ -57,12 +57,12 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
     def normalize_obs(self, obs):
         return 2 * ((obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5)
 
-    def unnormaliza_action(self, action):
+    def unnormalize_action(self, action):
         action = (action + 1) / 2  # [-1, 1] -> [0, 1]
         return action * (self.action_max - self.action_min) + self.action_min
 
     def step(self, action):
-        raw_action = self.unnormaliza_action(action)
+        raw_action = self.unnormalize_action(action)
         raw_obs, reward, done, info = self.env.step(raw_action)
 
         # normalize

@@ -16,7 +16,6 @@ device: cuda:0
 env_name: square
 obs_dim: 23
 action_dim: 7
-transition_dim: ${action_dim}
 denoising_steps: 20
 cond_steps: 1
 horizon_steps: 4
@@ -73,7 +72,7 @@ train:
   max_adv_weight: 100
   beta: 10
   buffer_size: 3000
-  batch_size: 256
+  batch_size: 1000
   replay_ratio: 64
   critic_update_ratio: 4
 
@@ -92,13 +91,13 @@ model:
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
-    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     mlp_dims: [256, 256, 256]
     activation_type: Mish
     residual_style: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}

@@ -6,15 +6,15 @@ hydra:
 _target_: agent.finetune.train_awr_diffusion_agent.TrainAWRDiffusionAgent
 
 name: ${env_name}_awr_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 base_policy_path: ${oc.env:DPPO_LOG_DIR}/gym-pretrain/halfcheetah-medium-v2_pre_diffusion_mlp_ta4_td20/2024-06-12_23-04-42/checkpoint/state_3000.pt
 normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
 
+seed: 42
 device: cuda:0
 env_name: halfcheetah-medium-v2
 obs_dim: 17
 action_dim: 6
-transition_dim: ${action_dim}
 denoising_steps: 20
 cond_steps: 1
 horizon_steps: 4
@@ -68,7 +68,7 @@ train:
   max_adv_weight: 100
   beta: 10
   buffer_size: 5000
-  batch_size: 256
+  batch_size: 1000
   replay_ratio: 64
   critic_update_ratio: 4
 
@@ -82,7 +82,7 @@ model:
   actor:
     _target_: model.diffusion.mlp_diffusion.DiffusionMLP
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     time_dim: 16
     mlp_dims: [512, 512, 512]

@@ -20,11 +20,6 @@ def expectile_loss(diff, expectile=0.8):
     return weight * (diff**2)
 
 
-def soft_update(target, source, tau):
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
-
 class IDQLDiffusion(RWRDiffusion):
 
     def __init__(
@@ -56,7 +51,6 @@ class IDQLDiffusion(RWRDiffusion):
 
         # compute advantage
         adv = q - v
-
         return adv
 
     def loss_critic_v(self, obs, actions):
@@ -64,10 +58,9 @@ class IDQLDiffusion(RWRDiffusion):
 
         # get the value loss
         v_loss = expectile_loss(adv).mean()
-
         return v_loss
 
-    def loss_critic_q(self, obs, next_obs, actions, rewards, dones, gamma):
+    def loss_critic_q(self, obs, next_obs, actions, rewards, terminated, gamma):
 
         # get current Q-function
         current_q1, current_q2 = self.critic_q(obs, actions)
@@ -77,7 +70,7 @@ class IDQLDiffusion(RWRDiffusion):
             next_v = self.critic_v(next_obs)
 
         # terminal state mask
-        mask = 1 - dones
+        mask = 1 - terminated
 
         # flatten
         rewards = rewards.view(-1)
@@ -91,11 +84,15 @@ class IDQLDiffusion(RWRDiffusion):
         q_loss = torch.mean((current_q1 - discounted_q) ** 2) + torch.mean(
             (current_q2 - discounted_q) ** 2
         )
-
         return q_loss
 
     def update_target_critic(self, tau):
-        soft_update(self.target_q, self.critic_q, tau)
+        for target_param, source_param in zip(
+            self.target_q.parameters(), self.critic_q.parameters()
+        ):
+            target_param.data.copy_(
+                target_param.data * (1.0 - tau) + source_param.data * tau
+            )
 
     # override
     def p_losses(
@@ -116,10 +113,9 @@ class IDQLDiffusion(RWRDiffusion):
 
         # Loss with mask
         if self.predict_epsilon:
-            loss = F.mse_loss(x_recon, noise, reduction="none")
+            loss = F.mse_loss(x_recon, noise)
         else:
-            loss = F.mse_loss(x_recon, x_start, reduction="none")
-        loss = einops.reduce(loss, "b h d -> b", "mean")
+            loss = F.mse_loss(x_recon, x_start)
         return loss.mean()
 
     # ---------- Sampling ----------#``

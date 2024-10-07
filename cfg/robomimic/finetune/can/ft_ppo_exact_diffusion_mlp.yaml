@@ -16,7 +16,6 @@ device: cuda:0
 env_name: can
 obs_dim: 23
 action_dim: 7
-transition_dim: ${action_dim}
 denoising_steps: 20
 ft_denoising_steps: 10
 cond_steps: 1
@@ -92,7 +91,6 @@ model:
   sde_min_beta: 1e-10
   sde_probability_flow: True
   #
-  gamma_denoising: 0.99
   clip_ploss_coef: 0.01
   min_sampling_denoising_std: 0.1
   min_logprob_denoising_std: 0.1
@@ -105,7 +103,7 @@ model:
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.CriticObs
     mlp_dims: [256, 256, 256]

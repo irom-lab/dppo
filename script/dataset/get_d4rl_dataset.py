@@ -1,95 +1,79 @@
 """
-Download D4RL dataset and save it into our custom format so it can be loaded for diffusion training.
-
+Download D4RL dataset and save it into our custom format for diffusion training.
 """
 
 import os
 import logging
 import gym
 import random
-from copy import deepcopy
 import numpy as np
 from tqdm import tqdm
-import pickle
-
 import d4rl.gym_mujoco  # Import required to register environments
+from copy import deepcopy
 
 
 def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
     # Create the environment
     env = gym.make(env_name)
-
-    # d4rl abides by the OpenAI gym interface
     env.reset()
-    env.step(env.action_space.sample())
-
-    # Each task is associated with a dataset
-    # dataset contains observations, actions, rewards, terminals, and infos
+    env.step(
+        env.action_space.sample()
+    )  # Interact with the environment to initialize it
     dataset = env.get_dataset()
+
+    # rename observations to states
+    dataset["states"] = dataset.pop("observations")
+
     logger.info("\n========== Basic Info ===========")
     logger.info(f"Keys in the dataset: {dataset.keys()}")
-    logger.info(f"Observation shape: {dataset['observations'].shape}")
+    logger.info(f"State shape: {dataset['states'].shape}")
     logger.info(f"Action shape: {dataset['actions'].shape}")
+
+    # determine trajectories from terminals and timeouts
     terminal_indices = np.argwhere(dataset["terminals"])[:, 0]
     timeout_indices = np.argwhere(dataset["timeouts"])[:, 0]
-    obs_dim = dataset["observations"].shape[1]
-    action_dim = dataset["actions"].shape[1]
-    done_indices = np.concatenate([terminal_indices, timeout_indices])
-    done_indices = np.sort(done_indices)
-    traj_lengths = []
-    prev_index = 0
-    for i in tqdm(range(len(done_indices))):
-        # get episode length
-        cur_index = done_indices[i]
-        traj_lengths.append(cur_index - prev_index + 1)
-        prev_index = cur_index + 1
-    obs_min = np.min(dataset["observations"], axis=0)
-    obs_max = np.max(dataset["observations"], axis=0)
+    done_indices = np.sort(np.concatenate([terminal_indices, timeout_indices]))
+    traj_lengths = np.diff(np.concatenate([[0], done_indices + 1]))
+
+    obs_min = np.min(dataset["states"], axis=0)
+    obs_max = np.max(dataset["states"], axis=0)
     action_min = np.min(dataset["actions"], axis=0)
     action_max = np.max(dataset["actions"], axis=0)
-    max_episode_steps = max(traj_lengths)
-    logger.info("total transitions: {}".format(np.sum(traj_lengths)))
-    logger.info("total trajectories: {}".format(len(traj_lengths)))
-    logger.info(
-        f"traj length mean/std: {np.mean(traj_lengths)}, {np.std(traj_lengths)}"
-    )
-    logger.info(f"traj length min/max: {np.min(traj_lengths)}, {np.max(traj_lengths)}")
-    logger.info(f"obs min: {obs_min}")
-    logger.info(f"obs max: {obs_max}")
-    logger.info(f"action min: {action_min}")
-    logger.info(f"action max: {action_max}")
 
-    # Subsample episodes by taking the first ones
+    logger.info(f"Total transitions: {np.sum(traj_lengths)}")
+    logger.info(f"Total trajectories: {len(traj_lengths)}")
+    logger.info(
+        f"Trajectory length mean/std: {np.mean(traj_lengths)}, {np.std(traj_lengths)}"
+    )
+    logger.info(
+        f"Trajectory length min/max: {np.min(traj_lengths)}, {np.max(traj_lengths)}"
+    )
+    logger.info(f"obs min: {obs_min}, obs max: {obs_max}")
+    logger.info(f"action min: {action_min}, action max: {action_max}")
+
+    # Subsample episodes if needed
     if args.max_episodes > 0:
         traj_lengths = traj_lengths[: args.max_episodes]
         done_indices = done_indices[: args.max_episodes]
-        max_episode_steps = max(traj_lengths)
 
-    # split indices in train and val
+    # Split into train and validation sets
     num_traj = len(traj_lengths)
     num_train = int(num_traj * (1 - val_split))
     train_indices = random.sample(range(num_traj), k=num_train)
 
-    # do over all indices
-    out_train = {}
-    keys = [
-        "observations",
-        "actions",
-        "rewards",
-    ]
-    out_train["observations"] = np.empty(
-        (0, max_episode_steps, dataset["observations"].shape[-1])
-    )
-    out_train["actions"] = np.empty(
-        (0, max_episode_steps, dataset["actions"].shape[-1])
-    )
-    out_train["rewards"] = np.empty((0, max_episode_steps))
-    out_train["traj_length"] = []
+    # Prepare data containers for train and validation sets
+    out_train = {
+        "states": [],
+        "actions": [],
+        "rewards": [],
+        "terminals": [],
+        "traj_lengths": [],
+    }
     out_val = deepcopy(out_train)
     prev_index = 0
     train_episode_reward_all = []
     val_episode_reward_all = []
-    for i in tqdm(range(len(done_indices))):
+    for i, cur_index in tqdm(enumerate(done_indices), total=len(done_indices)):
         if i in train_indices:
             out = out_train
             episode_reward_all = train_episode_reward_all
@@ -97,57 +81,65 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
             out = out_val
             episode_reward_all = val_episode_reward_all
 
-        # get episode length
-        cur_index = done_indices[i]
+        # Get the trajectory length and slice
         traj_length = cur_index - prev_index + 1
+        trajectory = {
+            key: dataset[key][prev_index : cur_index + 1]
+            for key in ["states", "actions", "rewards", "terminals"]
+        }
 
-        # Skip if the episode has no reward
-        if np.sum(dataset["rewards"][prev_index : cur_index + 1]) > 0:
-            out["traj_length"].append(traj_length)
+        # Skip if there is no reward in the episode
+        if np.sum(trajectory["rewards"]) > 0:
+            # Scale observations and actions
+            trajectory["states"] = (
+                2 * (trajectory["states"] - obs_min) / (obs_max - obs_min + 1e-6) - 1
+            )
+            trajectory["actions"] = (
+                2
+                * (trajectory["actions"] - action_min)
+                / (action_max - action_min + 1e-6)
+                - 1
+            )
 
-            # apply padding to make all episodes have the same max steps
-            for key in keys:
-                traj = dataset[key][prev_index : cur_index + 1]
-
-                # also scale
-                if key == "observations":
-                    traj = 2 * (traj - obs_min) / (obs_max - obs_min + 1e-6) - 1
-                elif key == "actions":
-                    traj = (
-                        2 * (traj - action_min) / (action_max - action_min + 1e-6) - 1
-                    )
-
-                if traj.ndim == 1:
-                    traj = np.pad(
-                        traj,
-                        (0, max_episode_steps - len(traj)),
-                        mode="constant",
-                        constant_values=0,
-                    )
-                else:
-                    traj = np.pad(
-                        traj,
-                        ((0, max_episode_steps - traj.shape[0]), (0, 0)),
-                        mode="constant",
-                        constant_values=0,
-                    )
-                out[key] = np.vstack((out[key], traj[None]))
-
-            # check reward
-            episode_reward_all.append(np.sum(out["rewards"][-1]))
+            for key in ["states", "actions", "rewards", "terminals"]:
+                out[key].append(trajectory[key])
+            out["traj_lengths"].append(traj_length)
+            episode_reward_all.append(np.sum(trajectory["rewards"]))
         else:
-            print(f"skipping {i} / {len(done_indices)}")
+            logger.info(f"Skipping trajectory {i} due to zero rewards.")
 
-        # update prev index
         prev_index = cur_index + 1
 
-    # Save to np file
-    save_train_path = os.path.join(save_dir, save_name_prefix + "train.npz")
-    save_val_path = os.path.join(save_dir, save_name_prefix + "val.npz")
-    with open(save_train_path, "wb") as f:
-        pickle.dump(out_train, f)
-    with open(save_val_path, "wb") as f:
-        pickle.dump(out_val, f)
+    # Concatenate trajectories
+    for key in ["states", "actions", "rewards", "terminals"]:
+        out_train[key] = np.concatenate(out_train[key], axis=0)
+
+        # Only concatenate validation set if it exists
+        if val_split > 0:
+            out_val[key] = np.concatenate(out_val[key], axis=0)
+
+    # Save train dataset to npz files
+    train_save_path = os.path.join(save_dir, save_name_prefix + "train.npz")
+    np.savez_compressed(
+        train_save_path,
+        states=np.array(out_train["states"]),
+        actions=np.array(out_train["actions"]),
+        rewards=np.array(out_train["rewards"]),
+        terminals=np.array(out_train["terminals"]),
+        traj_lengths=np.array(out_train["traj_lengths"]),
+    )
+
+    # Save validation dataset to npz files
+    val_save_path = os.path.join(save_dir, save_name_prefix + "val.npz")
+    np.savez_compressed(
+        val_save_path,
+        states=np.array(out_val["states"]),
+        actions=np.array(out_val["actions"]),
+        rewards=np.array(out_val["rewards"]),
+        terminals=np.array(out_val["terminals"]),
+        traj_lengths=np.array(out_val["traj_lengths"]),
+    )
+
     normalization_save_path = os.path.join(
         save_dir, save_name_prefix + "normalization.npz"
     )
@@ -159,83 +151,49 @@ def make_dataset(env_name, save_dir, save_name_prefix, val_split, logger):
         action_max=action_max,
     )
 
-    # debug
+    # Logging summary statistics
     logger.info("\n========== Final ===========")
     logger.info(
-        f"Train - Number of episodes and transitions: {len(out_train['traj_length'])}, {np.sum(out_train['traj_length'])}"
+        f"Train - Trajectories: {len(out_train['traj_lengths'])}, Transitions: {np.sum(out_train['traj_lengths'])}"
     )
     logger.info(
-        f"Val - Number of episodes and transitions: {len(out_val['traj_length'])}, {np.sum(out_val['traj_length'])}"
+        f"Val - Trajectories: {len(out_val['traj_lengths'])}, Transitions: {np.sum(out_val['traj_lengths'])}"
     )
     logger.info(
-        f"Train - Mean/Std trajectory length: {np.mean(out_train['traj_length'])}, {np.std(out_train['traj_length'])}"
+        f"Train - Mean/Std trajectory length: {np.mean(out_train['traj_lengths'])}, {np.std(out_train['traj_lengths'])}"
     )
-    logger.info(
-        f"Train - Max/Min trajectory length: {np.max(out_train['traj_length'])}, {np.min(out_train['traj_length'])}"
+    (
+        logger.info(
+            f"Val - Mean/Std trajectory length: {np.mean(out_val['traj_lengths'])}, {np.std(out_val['traj_lengths'])}"
+        )
+        if val_split > 0
+        else None
     )
-    if val_split > 0:
-        logger.info(
-            f"Val - Mean/Std trajectory length: {np.mean(out_val['traj_length'])}, {np.std(out_val['traj_length'])}"
-        )
-        logger.info(
-            f"Val - Max/Min trajectory length: {np.max(out_val['traj_length'])}, {np.min(out_val['traj_length'])}"
-        )
-    logger.info(
-        f"Train - Mean/Std episode reward: {np.mean(train_episode_reward_all)},  {np.std(train_episode_reward_all)}"
-    )
-    if val_split > 0:
-        logger.info(
-            f"Val - Mean/Std episode reward: {np.mean(val_episode_reward_all)},  {np.std(val_episode_reward_all)}"
-        )
-    for obs_dim_ind in range(obs_dim):
-        obs = out_train["observations"][:, :, obs_dim_ind]
-        logger.info(
-            f"Train - Obs dim {obs_dim_ind+1} mean {np.mean(obs)} std {np.std(obs)} min {np.min(obs)} max {np.max(obs)}"
-        )
-    for action_dim_ind in range(action_dim):
-        action = out_train["actions"][:, :, action_dim_ind]
-        logger.info(
-            f"Train - Action dim {action_dim_ind+1} mean {np.mean(action)} std {np.std(action)} min {np.min(action)} max {np.max(action)}"
-        )
-    if val_split > 0:
-        for obs_dim_ind in range(obs_dim):
-            obs = out_val["observations"][:, :, obs_dim_ind]
-            logger.info(
-                f"Val - Obs dim {obs_dim_ind+1} mean {np.mean(obs)} std {np.std(obs)} min {np.min(obs)} max {np.max(obs)}"
-            )
-        for action_dim_ind in range(action_dim):
-            action = out_val["actions"][:, :, action_dim_ind]
-            logger.info(
-                f"Val - Action dim {action_dim_ind+1} mean {np.mean(action)} std {np.std(action)} min {np.min(action)} max {np.max(action)}"
-            )
 
 
 if __name__ == "__main__":
     import argparse
+    import datetime
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--env_name", type=str, default="hopper-medium-v2")
     parser.add_argument("--save_dir", type=str, default=".")
     parser.add_argument("--save_name_prefix", type=str, default="")
-    parser.add_argument("--val_split", type=float, default="0.2")
-    parser.add_argument("--max_episodes", type=int, default="-1")
+    parser.add_argument("--val_split", type=float, default=0)
+    parser.add_argument("--max_episodes", type=int, default=-1)
     args = parser.parse_args()
 
-    import datetime
-
-    # import logging.config
-    if args.max_episodes > 0:
-        args.save_name_prefix += f"max_episodes_{args.max_episodes}_"
     os.makedirs(args.save_dir, exist_ok=True)
     log_path = os.path.join(
         args.save_dir,
         args.save_name_prefix
         + f"_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.log",
     )
+
     logger = logging.getLogger("get_D4RL_dataset")
     logger.setLevel(logging.INFO)
     file_handler = logging.FileHandler(log_path)
-    file_handler.setLevel(logging.INFO)  # Set the minimum level for this handler
+    file_handler.setLevel(logging.INFO)
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )

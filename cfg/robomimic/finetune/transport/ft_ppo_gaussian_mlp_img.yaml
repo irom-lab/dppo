@@ -16,7 +16,6 @@ device: cuda:0
 env_name: transport
 obs_dim: 18
 action_dim: 14
-transition_dim: ${action_dim}
 cond_steps: 1
 img_cond_steps: 1
 horizon_steps: 8
@@ -127,7 +126,7 @@ model:
     img_cond_steps: ${img_cond_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    transition_dim: ${transition_dim}
+    action_dim: ${action_dim}
   critic:
     _target_: model.common.critic.ViTCritic
     spatial_emb: 128

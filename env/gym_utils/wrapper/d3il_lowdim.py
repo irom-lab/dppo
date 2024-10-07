@@ -1,6 +1,8 @@
 """
 Environment wrapper for D3IL environments with state observations.
 
+Also return done=False since we do not terminate episode early.
+
 For consistency, we will use Dict{} for the observation space, with the key "state" for the state observation.
 """
 
@@ -73,7 +75,7 @@ class D3ilLowdimWrapper(gym.Env):
 
         # normalize
         obs = self.normalize_obs(obs)
-        return {"state": obs}, reward, done, info
+        return {"state": obs}, reward, False, info
 
     def render(self, mode="rgb_array"):
         h, w = self.render_hw

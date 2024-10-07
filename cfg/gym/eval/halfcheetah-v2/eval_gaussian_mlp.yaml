@@ -1,0 +1,54 @@
+defaults:
+  - _self_
+hydra:
+  run:  
+    dir: ${logdir}
+_target_: agent.eval.eval_gaussian_agent.EvalGaussianAgent
+
+name: ${env_name}_eval_gaussian_mlp_ta${horizon_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/gym-eval/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path:
+normalization_path: ${oc.env:DPPO_DATA_DIR}/gym/${env_name}/normalization.npz
+
+seed: 42
+device: cuda:0
+env_name: halfcheetah-medium-v2
+obs_dim: 17
+action_dim: 6
+cond_steps: 1
+horizon_steps: 1
+act_steps: 1
+
+n_steps: 1000  # each episode can take maximum (max_episode_steps / act_steps, =250 right now) steps but may finish earlier in gym. We only count episodes finished within n_steps for evaluation.
+render_num: 0
+
+env:
+  n_envs: 40
+  name: ${env_name}
+  max_episode_steps: 1000
+  reset_at_iteration: False
+  save_video: False
+  best_reward_threshold_for_success: 3  # success rate not relevant for gym tasks
+  wrappers:
+    mujoco_locomotion_lowdim:
+      normalization_path: ${normalization_path}
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+model:
+  _target_: model.common.gaussian.GaussianModel
+  #
+  network_path: ${base_policy_path}
+  network:
+    _target_: model.common.mlp_gaussian.Gaussian_MLP
+    mlp_dims: [256, 256, 256]
+    activation_type: Mish
+    fixed_std: 0.1
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    
+  horizon_steps: ${horizon_steps}
+  device: ${device}
