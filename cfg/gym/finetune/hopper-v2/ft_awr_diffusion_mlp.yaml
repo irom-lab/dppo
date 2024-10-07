@@ -68,7 +68,7 @@ train:
   max_adv_weight: 100
   beta: 10
   buffer_size: 5000
-  batch_size: 256
+  batch_size: 1000
   replay_ratio: 64
   critic_update_ratio: 4
 
