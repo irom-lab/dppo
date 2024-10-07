@@ -65,11 +65,12 @@ train:
     num: 0
   # DIPO specific
   scale_reward_factor: 0.01
-  eta: 0.0001
+  target_ema_rate: 0.005
+  buffer_size: 1000000
+  action_lr: 0.0001
   action_gradient_steps: 10
-  buffer_size: 400000
-  batch_size: 5000
   replay_ratio: 64
+  batch_size: 1000
 
 model:
   _target_: model.diffusion.diffusion_dipo.DIPODiffusion
