@@ -66,10 +66,10 @@ train:
   # DQL specific
   scale_reward_factor: 0.01
   target_ema_rate: 0.005
+  buffer_size: 1000000
   eta: 1.0
-  buffer_size: 400000
-  batch_size: 5000
-  replay_ratio: 64
+  replay_ratio: 16
+  batch_size: 1000
 
 model:
   _target_: model.diffusion.diffusion_dql.DQLDiffusion

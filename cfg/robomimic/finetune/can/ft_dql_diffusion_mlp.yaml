@@ -47,7 +47,7 @@ wandb:
 
 train:
   n_train_itr: 300
-  n_critic_warmup_itr: 2
+  n_critic_warmup_itr: 5
   n_steps: 300
   gamma: 0.999
   actor_lr: 1e-5
@@ -69,10 +69,11 @@ train:
     num: 0
   # DQL specific
   scale_reward_factor: 1
+  target_ema_rate: 0.005
+  buffer_size: 1000000
   eta: 1.0
-  buffer_size: 400000
-  batch_size: 5000
-  replay_ratio: 64
+  replay_ratio: 16
+  batch_size: 1000
 
 model:
   _target_: model.diffusion.diffusion_dql.DQLDiffusion
