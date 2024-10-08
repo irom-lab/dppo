@@ -97,7 +97,7 @@ model:
     tanh_output: False  # squash after sampling instead
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${horizon_steps}
-    
+    action_dim: ${action_dim}    
     std_max: 7.3891
     std_min: 0.0067
   critic:
