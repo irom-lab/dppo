@@ -145,7 +145,6 @@ class TrainIBRLAgent(TrainAgent):
             # Collect a set of trajectories from env
             cnt_episode = 0
             for step in range(n_steps):
-
                 # Select action
                 with torch.no_grad():
                     cond = {
@@ -164,9 +163,13 @@ class TrainIBRLAgent(TrainAgent):
                 action_venv = samples[:, : self.act_steps]
 
                 # Apply multi-step action
-                obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv = (
-                    self.venv.step(action_venv)
-                )
+                (
+                    obs_venv,
+                    reward_venv,
+                    terminated_venv,
+                    truncated_venv,
+                    info_venv,
+                ) = self.venv.step(action_venv)
                 done_venv = terminated_venv | truncated_venv
                 reward_trajs[step] = reward_venv
                 firsts_trajs[step + 1] = done_venv
@@ -177,14 +180,13 @@ class TrainIBRLAgent(TrainAgent):
                         obs_buffer.append(prev_obs_venv["state"][i])
                         if "final_obs" in info_venv[i]:  # truncated
                             next_obs_buffer.append(info_venv[i]["final_obs"]["state"])
-                            terminated_venv[i] = False
                         else:  # first obs in new episode
                             next_obs_buffer.append(obs_venv["state"][i])
                         action_buffer.append(action_venv[i])
                     reward_buffer.extend(
                         (reward_venv * self.scale_reward_factor).tolist()
                     )
-                    terminated_buffer.append(terminated_venv.tolist())
+                    terminated_buffer.extend(terminated_venv.tolist())
 
                 # update for next step
                 prev_obs_venv = obs_venv
