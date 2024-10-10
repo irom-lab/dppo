@@ -8,12 +8,12 @@ _target_: agent.finetune.train_rlpd_agent.TrainRLPDAgent
 name: ${env_name}_rlpd_mlp_ta${horizon_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
-normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
-offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-ph/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-ph/train.npz
 
 seed: 42
 device: cuda:0
-env_name: square
+env_name: can
 obs_dim: 23
 action_dim: 7
 cond_steps: 1
@@ -23,7 +23,7 @@ act_steps: 1
 env:
   n_envs: 1
   name: ${env_name}
-  max_episode_steps: 400
+  max_episode_steps: 300
   reset_at_iteration: False
   save_video: False
   best_reward_threshold_for_success: 1
@@ -42,7 +42,7 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: rlpd-${env_name}
+  project: rlpd-ph-${env_name}
   run: ${now:%H-%M-%S}_${name}
 
 train:
