@@ -58,7 +58,9 @@ class PPODiffusion(VPGDiffusion):
     def loss(
         self,
         obs,
-        chains,
+        chains_prev,
+        chains_next,
+        denoising_inds,
         returns,
         oldvalues,
         advantages,
@@ -81,17 +83,16 @@ class PPODiffusion(VPGDiffusion):
         reward_horizon: action horizon that backpropagates gradient
         """
         # Get new logprobs for denoising steps from T-1 to 0 - entropy is fixed fod diffusion
-        newlogprobs, eta, denoising_indices = self.get_logprobs_subsample(
+        newlogprobs, eta = self.get_logprobs_subsample(
             obs,
-            chains,
+            chains_prev,
+            chains_next,
+            denoising_inds,
             get_ent=True,
         )
         entropy_loss = -eta.mean()
         newlogprobs = newlogprobs.clamp(min=-5, max=2)
         oldlogprobs = oldlogprobs.clamp(min=-5, max=2)
-
-        # Index oldlogprobs with sampled indices
-        oldlogprobs = oldlogprobs[torch.arange(len(oldlogprobs)), denoising_indices]
 
         # only backpropagate through the earlier steps (e.g., ones actually executed in the environment)
         newlogprobs = newlogprobs[:, :reward_horizon, :]
@@ -140,7 +141,7 @@ class PPODiffusion(VPGDiffusion):
         discount = torch.tensor(
             [
                 self.gamma_denoising ** (self.ft_denoising_steps - i - 1)
-                for i in denoising_indices
+                for i in denoising_inds
             ]
         ).to(self.device)
         advantages *= discount
@@ -150,7 +151,7 @@ class PPODiffusion(VPGDiffusion):
         ratio = logratio.exp()
 
         # exponentially interpolate between the base and the current clipping value over denoising steps and repeat
-        t = (denoising_indices.float() / (self.ft_denoising_steps - 1)).to(self.device)
+        t = (denoising_inds.float() / (self.ft_denoising_steps - 1)).to(self.device)
         if self.ft_denoising_steps > 1:
             clip_ploss_coef = self.clip_ploss_coef_base + (
                 self.clip_ploss_coef - self.clip_ploss_coef_base

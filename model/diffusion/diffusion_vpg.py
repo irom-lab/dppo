@@ -398,7 +398,9 @@ class VPGDiffusion(DiffusionModel):
     def get_logprobs_subsample(
         self,
         cond,
-        chains,
+        chains_prev,
+        chains_next,
+        denoising_inds,
         get_ent: bool = False,
         use_base_policy: bool = False,
     ):
@@ -418,17 +420,6 @@ class VPGDiffusion(DiffusionModel):
             entropy (if get_ent=True):  (B, Ta)
             denoising_indices: (B, )
         """
-        B = len(chains)
-
-        # # Repeat cond for denoising_steps, flatten batch and time dimensions
-        # cond = {
-        #     key: cond[key]
-        #     .unsqueeze(1)
-        #     .repeat(1, self.ft_denoising_steps, *(1,) * (cond[key].ndim - 1))
-        #     .flatten(start_dim=0, end_dim=1)
-        #     for key in cond
-        # }  # less memory usage than einops?
-
         # Sample t for batch dim, keep it 1-dim
         if self.use_ddim:
             t_single = self.ddim_t[-self.ft_denoising_steps :]
@@ -440,23 +431,16 @@ class VPGDiffusion(DiffusionModel):
                 device=self.device,
             )
             # 4,3,2,1,0,4,3,2,1,0,...,4,3,2,1,0
-        denoising_indices = torch.randint(
-            low=0, high=self.ft_denoising_steps, size=(B,)
-        )
-        t_all = t_single[denoising_indices]
+        t_all = t_single[denoising_inds]
         if self.use_ddim:
             ddim_indices_single = torch.arange(
                 start=self.ddim_steps - self.ft_denoising_steps,
                 end=self.ddim_steps,
                 device=self.device,
             )  # only used for DDIM
-            ddim_indices = ddim_indices_single[denoising_indices]
+            ddim_indices = ddim_indices_single[denoising_inds]
         else:
             ddim_indices = None
-
-        # Index chains
-        chains_prev = chains[torch.arange(B), denoising_indices]
-        chains_next = chains[torch.arange(B), denoising_indices + 1]
 
         # Forward pass with previous chains
         next_mean, logvar, eta = self.p_mean_var(
@@ -473,8 +457,8 @@ class VPGDiffusion(DiffusionModel):
         # Get logprobs with gaussian
         log_prob = dist.log_prob(chains_next)
         if get_ent:
-            return log_prob, eta, denoising_indices
-        return log_prob, denoising_indices
+            return log_prob, eta
+        return log_prob
 
     def loss(self, cond, chains, reward):
         """
