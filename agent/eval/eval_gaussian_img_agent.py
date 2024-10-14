@@ -32,7 +32,7 @@ class EvalImgGaussianAgent(EvalAgent):
         if self.render_video:
             for env_ind in range(self.n_render):
                 options_venv[env_ind]["video_path"] = os.path.join(
-                    self.render_dir, f"itr-{self.itr}_trial-{env_ind}.mp4"
+                    self.render_dir, f"eval_trial-{env_ind}.mp4"
                 )
 
         # Reset env before iteration starts

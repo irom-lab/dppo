@@ -28,7 +28,7 @@ class EvalDiffusionAgent(EvalAgent):
         if self.render_video:
             for env_ind in range(self.n_render):
                 options_venv[env_ind]["video_path"] = os.path.join(
-                    self.render_dir, f"itr-{self.itr}_trial-{env_ind}.mp4"
+                    self.render_dir, f"eval_trial-{env_ind}.mp4"
                 )
 
         # Reset env before iteration starts
@@ -62,7 +62,7 @@ class EvalDiffusionAgent(EvalAgent):
             )
             reward_trajs[step] = reward_venv
             firsts_trajs[step + 1] = terminated_venv | truncated_venv
-            
+
             # update for next step
             prev_obs_venv = obs_venv
 

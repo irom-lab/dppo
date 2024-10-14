@@ -395,6 +395,71 @@ class VPGDiffusion(DiffusionModel):
             return log_prob, eta
         return log_prob
 
+    def get_logprobs_subsample(
+        self,
+        cond,
+        chains_prev,
+        chains_next,
+        denoising_inds,
+        get_ent: bool = False,
+        use_base_policy: bool = False,
+    ):
+        """
+        Calculating the logprobs of random samples of denoised chains.
+
+        Args:
+            cond: dict with key state/rgb; more recent obs at the end
+                state: (B, To, Do)
+                rgb: (B, To, C, H, W)
+            chains: (B, K+1, Ta, Da)
+            get_ent: flag for returning entropy
+            use_base_policy: flag for using base policy
+
+        Returns:
+            logprobs: (B, Ta, Da)
+            entropy (if get_ent=True):  (B, Ta)
+            denoising_indices: (B, )
+        """
+        # Sample t for batch dim, keep it 1-dim
+        if self.use_ddim:
+            t_single = self.ddim_t[-self.ft_denoising_steps :]
+        else:
+            t_single = torch.arange(
+                start=self.ft_denoising_steps - 1,
+                end=-1,
+                step=-1,
+                device=self.device,
+            )
+            # 4,3,2,1,0,4,3,2,1,0,...,4,3,2,1,0
+        t_all = t_single[denoising_inds]
+        if self.use_ddim:
+            ddim_indices_single = torch.arange(
+                start=self.ddim_steps - self.ft_denoising_steps,
+                end=self.ddim_steps,
+                device=self.device,
+            )  # only used for DDIM
+            ddim_indices = ddim_indices_single[denoising_inds]
+        else:
+            ddim_indices = None
+
+        # Forward pass with previous chains
+        next_mean, logvar, eta = self.p_mean_var(
+            chains_prev,
+            t_all,
+            cond=cond,
+            index=ddim_indices,
+            use_base_policy=use_base_policy,
+        )
+        std = torch.exp(0.5 * logvar)
+        std = torch.clip(std, min=self.min_logprob_denoising_std)
+        dist = Normal(next_mean, std)
+
+        # Get logprobs with gaussian
+        log_prob = dist.log_prob(chains_next)
+        if get_ent:
+            return log_prob, eta
+        return log_prob
+
     def loss(self, cond, chains, reward):
         """
         REINFORCE loss. Not used right now.
