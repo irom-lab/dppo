@@ -204,9 +204,13 @@ class TrainCalQLAgent(TrainAgent):
                     action_venv = samples[:, : self.act_steps]
 
                 # Apply multi-step action
-                obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv = (
-                    self.venv.step(action_venv)
-                )
+                (
+                    obs_venv,
+                    reward_venv,
+                    terminated_venv,
+                    truncated_venv,
+                    info_venv,
+                ) = self.venv.step(action_venv)
                 done_venv = terminated_venv | truncated_venv
                 reward_trajs[step] = reward_venv
                 firsts_trajs[step + 1] = done_venv
@@ -308,7 +312,8 @@ class TrainCalQLAgent(TrainAgent):
 
                 # override num_update
                 if self.train_online:
-                    num_update = len(reward_trajs)  # assume one env!
+                    # the amount of new transitions(single env)
+                    num_update = len(reward_trajs_split[0])
                 else:
                     num_update = self.num_update
                 for _ in range(num_update):
@@ -348,6 +353,7 @@ class TrainCalQLAgent(TrainAgent):
 
                     # Sample from ONLINE buffer
                     if self.train_online:
+                        print(_)
                         inds = np.random.choice(len(obs_buffer), self.batch_size // 2)
                         obs_b_on = (
                             torch.from_numpy(obs_array[inds]).float().to(self.device)

@@ -9,12 +9,12 @@ name: ${env_name}_calql_mlp_ta${horizon_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 base_policy_path:
 robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
-normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
-offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-ph/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-ph/train.npz
 
 seed: 42
 device: cuda:0
-env_name: can
+env_name: square
 obs_dim: 23
 action_dim: 7
 cond_steps: 1
@@ -25,9 +25,9 @@ env:
   n_envs: 1
   name: ${env_name}
   best_reward_threshold_for_success: 1
-  max_episode_steps: 300
+  max_episode_steps: 400
   reset_at_iteration: False
-  save_video: True
+  save_video: False
   wrappers:
     robomimic_lowdim:
       normalization_path: ${normalization_path}
@@ -43,7 +43,7 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: calql-${env_name}
+  project: calql-ph-${env_name}
   run: ${now:%H-%M-%S}_${name}
 
 train:
@@ -66,8 +66,8 @@ train:
   save_model_freq: 100
   val_freq: 10
   render:
-    freq: 50
-    num: 1
+    freq: 1
+    num: 0
   log_freq: 1
   # CalQL specific
   train_online: True

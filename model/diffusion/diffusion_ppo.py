@@ -22,7 +22,6 @@ from model.diffusion.diffusion_vpg import VPGDiffusion
 
 
 class PPODiffusion(VPGDiffusion):
-
     def __init__(
         self,
         gamma_denoising: float,

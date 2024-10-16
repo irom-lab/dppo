@@ -6,15 +6,14 @@ hydra:
 _target_: agent.finetune.train_calql_agent.TrainCalQLAgent
 
 name: ${env_name}_calql_mlp_ta${horizon_steps}
-logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-base_policy_path:
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}.json
-normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/normalization.npz
-offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}/train.npz
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-ph/normalization.npz
+offline_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-ph/train.npz
 
 seed: 42
 device: cuda:0
-env_name: can
+env_name: square
 obs_dim: 23
 action_dim: 7
 cond_steps: 1
@@ -25,9 +24,9 @@ env:
   n_envs: 1
   name: ${env_name}
   best_reward_threshold_for_success: 1
-  max_episode_steps: 300
+  max_episode_steps: 400
   reset_at_iteration: False
-  save_video: True
+  save_video: False
   wrappers:
     robomimic_lowdim:
       normalization_path: ${normalization_path}
@@ -43,13 +42,12 @@ env:
 
 wandb:
   entity: ${oc.env:DPPO_WANDB_ENTITY}
-  project: calql-${env_name}
+  project: calql-ph-${env_name}
   run: ${now:%H-%M-%S}_${name}
 
 train:
-  n_train_itr: 10000
-  n_steps: 1  # not used
-  n_episode_per_epoch: 1
+  n_train_itr: 1000
+  n_steps: 1
   gamma: 0.99
   actor_lr: 1e-4
   actor_weight_decay: 0
@@ -63,22 +61,21 @@ train:
     first_cycle_steps: 1000
     warmup_steps: 10
     min_lr: 3e-4
-  save_model_freq: 100
+  save_model_freq: 10
   val_freq: 10
   render:
-    freq: 50
-    num: 1
+    freq: 1
+    num: 0
   log_freq: 1
   # CalQL specific
-  train_online: True
+  train_online: False
   batch_size: 256
   n_random_actions: 4
   target_ema_rate: 0.005
   scale_reward_factor: 1.0
   num_update: 1000
   buffer_size: 1000000
-  online_utd_ratio: 1
-  n_eval_episode: 40
+  n_eval_episode: 10
   n_explore_steps: 0
   target_entropy: ${eval:'- ${action_dim} * ${act_steps}'}
   init_temperature: 1
@@ -89,7 +86,6 @@ model:
   randn_clip_value: 3
   cql_min_q_weight: 5.0
   tanh_output: True
-  network_path: ${base_policy_path}
   actor:
     _target_: model.common.mlp_gaussian.Gaussian_MLP
     mlp_dims: [512, 512, 512]
