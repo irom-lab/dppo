@@ -19,7 +19,6 @@ from util.scheduler import CosineAnnealingWarmupRestarts
 
 
 class TrainPPODiffusionAgent(TrainPPOAgent):
-
     def __init__(self, cfg):
         super().__init__(cfg)
 
@@ -46,7 +45,6 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             )
 
     def run(self):
-
         # Start training loop
         timer = Timer()
         run_results = []
@@ -54,7 +52,6 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
-
             # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
             options_venv = [{} for _ in range(self.n_envs)]
             if self.itr % self.render_freq == 0 and self.render_video:
@@ -126,9 +123,13 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 action_venv = output_venv[:, : self.act_steps]
 
                 # Apply multi-step action
-                obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv = (
-                    self.venv.step(action_venv)
-                )
+                (
+                    obs_venv,
+                    reward_venv,
+                    terminated_venv,
+                    truncated_venv,
+                    info_venv,
+                ) = self.venv.step(action_venv)
                 done_venv = terminated_venv | truncated_venv
                 if self.save_full_observations:  # state-only
                     obs_full_venv = np.array(
@@ -303,12 +304,11 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
 
                 # Update policy and critic
                 total_steps = self.n_steps * self.n_envs * self.model.ft_denoising_steps
-                inds_k = torch.randperm(total_steps, device=self.device)
                 clipfracs = []
                 for update_epoch in range(self.update_epochs):
-
                     # for each epoch, go through all data in batches
                     flag_break = False
+                    inds_k = torch.randperm(total_steps, device=self.device)
                     num_batch = max(1, total_steps // self.batch_size)  # skip last ones
                     for batch in range(num_batch):
                         start = batch * self.batch_size

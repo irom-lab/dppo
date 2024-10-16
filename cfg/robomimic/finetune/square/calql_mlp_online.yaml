@@ -27,7 +27,7 @@ env:
   best_reward_threshold_for_success: 1
   max_episode_steps: 400
   reset_at_iteration: False
-  save_video: False
+  save_video: True
   wrappers:
     robomimic_lowdim:
       normalization_path: ${normalization_path}
@@ -66,8 +66,8 @@ train:
   save_model_freq: 100
   val_freq: 10
   render:
-    freq: 1
-    num: 0
+    freq: 50
+    num: 1
   log_freq: 1
   # CalQL specific
   train_online: True

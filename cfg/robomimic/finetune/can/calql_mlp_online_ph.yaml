@@ -47,7 +47,7 @@ wandb:
   run: ${now:%H-%M-%S}_${name}
 
 train:
-  n_train_itr: 10000
+  n_train_itr: 1000
   n_steps: 1  # not used
   n_episode_per_epoch: 1
   gamma: 0.99

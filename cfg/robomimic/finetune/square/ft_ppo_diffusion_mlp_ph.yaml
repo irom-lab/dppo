@@ -19,8 +19,8 @@ action_dim: 7
 denoising_steps: 20
 ft_denoising_steps: 10
 cond_steps: 1
-horizon_steps: 4
-act_steps: 4
+horizon_steps: 1
+act_steps: 1
 
 env:
   n_envs: 50
@@ -51,12 +51,12 @@ train:
   n_critic_warmup_itr: 2
   n_steps: 400
   gamma: 0.999
-  actor_lr: 1e-5
+  actor_lr: 1e-4
   actor_weight_decay: 0
   actor_lr_scheduler:
     first_cycle_steps: 1000
     warmup_steps: 10
-    min_lr: 1e-5
+    min_lr: 1e-4
   critic_lr: 1e-3
   critic_weight_decay: 0
   critic_lr_scheduler:
@@ -80,7 +80,7 @@ train:
 model:
   _target_: model.diffusion.diffusion_ppo.PPODiffusion
   # HP to tune
-  gamma_denoising: 0.99
+  gamma_denoising: 0.9
   clip_ploss_coef: 0.01
   clip_ploss_coef_base: 0.001
   clip_ploss_coef_rate: 3

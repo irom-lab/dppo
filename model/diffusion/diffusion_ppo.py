@@ -30,7 +30,7 @@ class PPODiffusion(VPGDiffusion):
         clip_ploss_coef_rate: float = 3,
         clip_vloss_coef: Optional[float] = None,
         clip_advantage_lower_quantile: float = 0,
-        clip_apdvantage_upper_quantile: float = 1,
+        clip_advantage_upper_quantile: float = 1,
         norm_adv: bool = True,
         **kwargs,
     ):
