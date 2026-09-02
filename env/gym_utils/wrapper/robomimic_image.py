@@ -13,6 +13,59 @@ from gym import spaces
 import imageio
 
 
+def _to_chw(image):
+    """Convert one RGB observation to the channel-first layout used by DPPO.
+
+    Robosuite normally exposes camera observations as ``(H, W, C)`` while the
+    convolutional encoders in this project consume ``(C, H, W)``.  Some
+    environments (and a few test/dataset adapters) already return channel-first
+    arrays, so blindly transposing would break those callers.  Infer the layout
+    from the conventional RGB/RGBA channel sizes and fail loudly for an
+    unsupported shape instead of allowing a later Conv2d error.
+    """
+
+    image = np.asarray(image)
+    if image.ndim != 3:
+        raise ValueError(
+            f"RGB observations must be rank-3 (H, W, C) or (C, H, W); got {image.shape}"
+        )
+
+    channel_first = image.shape[0] in (1, 3, 4)
+    channel_last = image.shape[-1] in (1, 3, 4)
+
+    # Prefer the unambiguous interpretation.  For the rare case where both
+    # axes look like channel axes, preserving channel-first is backwards
+    # compatible with the project's existing tensor contract.
+    if channel_last and not channel_first:
+        image = np.transpose(image, (2, 0, 1))
+    elif not channel_first and not channel_last:
+        raise ValueError(
+            "Could not infer RGB channel dimension from observation shape "
+            f"{image.shape}; expected 1, 3, or 4 channels"
+        )
+
+    return np.ascontiguousarray(image)
+
+
+def _to_uint8_range(image):
+    """Return an RGB array as float32 values in the encoder's 0--255 range."""
+
+    source = np.asarray(image)
+    image = source.astype(np.float32, copy=False)
+
+    # Robosuite may return uint8 pixels, whereas a few wrappers return floats
+    # normalised to [0, 1].  Avoid the old uint8 in-place multiplication (which
+    # wraps modulo 256) and do not rescale values that are already in [0, 255].
+    if (
+        np.issubdtype(source.dtype, np.floating)
+        and image.size
+        and np.nanmax(image) <= 1.0
+    ):
+        image = image * 255.0
+
+    return np.ascontiguousarray(image)
+
+
 class RobomimicImageWrapper(gym.Env):
     def __init__(
         self,
@@ -96,12 +149,11 @@ class RobomimicImageWrapper(gym.Env):
         obs = {"rgb": None, "state": None}  # stack rgb if multiple cameras
         for key in self.obs_keys:
             if key in self.image_keys:
+                image = _to_chw(raw_obs[key])
                 if obs["rgb"] is None:
-                    obs["rgb"] = raw_obs[key]
+                    obs["rgb"] = image
                 else:
-                    obs["rgb"] = np.concatenate(
-                        [obs["rgb"], raw_obs[key]], axis=0
-                    )  # C H W
+                    obs["rgb"] = np.concatenate([obs["rgb"], image], axis=0)  # C H W
             else:
                 if obs["state"] is None:
                     obs["state"] = raw_obs[key]
@@ -109,7 +161,7 @@ class RobomimicImageWrapper(gym.Env):
                     obs["state"] = np.concatenate([obs["state"], raw_obs[key]], axis=-1)
         if self.normalize:
             obs["state"] = self.normalize_obs(obs["state"])
-        obs["rgb"] *= 255  # [0, 1] -> [0, 255], in float64
+        obs["rgb"] = _to_uint8_range(obs["rgb"])
         return obs
 
     def seed(self, seed=None):
